@@ -1,0 +1,23 @@
+{
+  "name": "cost-calculator-3d",
+  "version": "1.0.0",
+  "description": "Cotizador de impresión 3D (FDM) para el equipo de ventas",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "npx --yes http-server -p 8080 -c-1 ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Darkauu/Cost-Calculator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Darkauu/Cost-Calculator/issues"
+  },
+  "homepage": "https://github.com/Darkauu/Cost-Calculator#readme",
+  "devDependencies": {
+    "fflate": "0.8.2",
+    "three": "0.160.0"
+  },
+  "type": "module",
+  "private": true
+}
