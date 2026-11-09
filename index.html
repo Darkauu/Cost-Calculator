@@ -1,10 +1,165 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <title>Title</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cotizador 3D</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+        "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js"
+      }
+    }
+  </script>
 </head>
 <body>
+  <header class="topbar">
+    <div>
+      <h1 data-i18n="appTitle">Cotizador de impresión 3D</h1>
+      <p class="muted" data-i18n="appSubtitle"></p>
+    </div>
+    <div class="topbar-actions">
+      <div class="seg" role="group" aria-label="Idioma / Language">
+        <button type="button" data-lang="es">ES</button>
+        <button type="button" data-lang="en">EN</button>
+      </div>
+      <button type="button" class="btn ghost" id="adminBtn" data-i18n="admin">Administración</button>
+      <button type="button" class="btn ghost hidden" id="lockBtn" data-i18n="lock">Bloquear</button>
+    </div>
+  </header>
 
+  <main class="layout">
+    <section class="col">
+      <div class="drop" id="drop" tabindex="0" role="button">
+        <input type="file" id="fileInput" accept=".stl,.3mf,.obj,.gcode,.gco" hidden>
+        <div class="drop-empty" id="dropEmpty">
+          <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+          <strong data-i18n="dropTitle"></strong>
+          <span class="muted" data-i18n="dropFormats"></span>
+          <span class="muted small" data-i18n="dropHint"></span>
+        </div>
+        <div class="viewer hidden" id="viewer"></div>
+        <div class="drop-status hidden" id="dropStatus"></div>
+      </div>
+      <div class="file-row hidden" id="fileRow">
+        <span class="file-name" id="fileName"></span>
+        <span class="badge" id="sourceBadge"></span>
+        <button type="button" class="btn ghost small" id="changeFile" data-i18n="changeFile"></button>
+      </div>
+
+      <div class="card" id="analysisCard" hidden>
+        <h2 data-i18n="analysis"></h2>
+        <dl class="stats" id="stats"></dl>
+        <div class="complexity" id="complexityBox"></div>
+      </div>
+
+      <details class="card manual" id="manual">
+        <summary data-i18n="manualToggle"></summary>
+        <div class="grid2">
+          <label><span data-i18n="manualGrams"></span><input type="number" id="manualGrams" min="0" step="0.1" inputmode="decimal"></label>
+          <label><span data-i18n="manualHours"></span><input type="number" id="manualHours" min="0" step="0.05" inputmode="decimal"></label>
+        </div>
+      </details>
+    </section>
+
+    <section class="col">
+      <div class="card">
+        <h2 data-i18n="options"></h2>
+        <form id="opts" class="opts" onsubmit="return false">
+          <label><span data-i18n="material"></span><select id="material"></select></label>
+          <label><span data-i18n="quantity"></span><input type="number" id="quantity" value="1" min="1" step="1" inputmode="numeric"></label>
+          <fieldset class="full">
+            <legend data-i18n="quality"></legend>
+            <div class="seg" id="quality">
+              <label><input type="radio" name="quality" value="draft"><span data-i18n="quality_draft"></span></label>
+              <label><input type="radio" name="quality" value="standard" checked><span data-i18n="quality_standard"></span></label>
+              <label><input type="radio" name="quality" value="fine"><span data-i18n="quality_fine"></span></label>
+            </div>
+          </fieldset>
+          <label><span data-i18n="finish"></span>
+            <select id="finish">
+              <option value="none" data-i18n="finish_none"></option>
+              <option value="sanded" data-i18n="finish_sanded"></option>
+              <option value="painted" data-i18n="finish_painted"></option>
+              <option value="multicolor" data-i18n="finish_multicolor"></option>
+            </select>
+          </label>
+          <label><span data-i18n="complexityOverride"></span>
+            <select id="complexity">
+              <option value="auto" data-i18n="complexityAuto"></option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+          </label>
+          <fieldset class="full">
+            <legend data-i18n="urgency"></legend>
+            <div class="seg" id="urgency">
+              <label><input type="radio" name="urgency" value="normal" checked><span data-i18n="urgency_normal"></span></label>
+              <label><input type="radio" name="urgency" value="urgent"><span data-i18n="urgency_urgent"></span></label>
+            </div>
+          </fieldset>
+        </form>
+      </div>
+
+      <div class="card result" id="result">
+        <h2 data-i18n="prices"></h2>
+        <p class="muted" id="emptyResult" data-i18n="emptyResult"></p>
+        <div id="resultBody" hidden>
+          <div class="tiers" id="tiers"></div>
+          <ul class="notes" id="notes"></ul>
+          <label class="negotiate">
+            <span data-i18n="negotiated"></span>
+            <div class="negotiate-row">
+              <input type="number" id="negotiated" min="0" step="0.5" inputmode="decimal" data-i18n-placeholder="negotiatedHint">
+              <span class="pill" id="negotiatedStatus" hidden></span>
+            </div>
+          </label>
+          <ul class="warnings" id="warnings"></ul>
+          <div class="actions">
+            <button type="button" class="btn primary" id="copyBtn" data-i18n="copyQuote"></button>
+            <button type="button" class="btn" id="printBtn" data-i18n="printQuote"></button>
+          </div>
+          <div class="breakdown hidden" id="breakdown"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="printSheet" class="print-sheet"></div>
+
+  <dialog id="pinDialog" class="dlg">
+    <form method="dialog" id="pinForm">
+      <h2 data-i18n="pinPrompt"></h2>
+      <input type="password" id="pinInput" inputmode="numeric" autocomplete="off" required>
+      <p class="error small" id="pinError" hidden data-i18n="pinWrong"></p>
+      <div class="actions">
+        <button type="button" class="btn" value="cancel" id="pinCancel" data-i18n="close"></button>
+        <button type="submit" class="btn primary">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="adminDialog" class="dlg wide">
+    <form method="dialog" id="adminForm">
+      <h2 data-i18n="adminTitle"></h2>
+      <p class="muted small" data-i18n="adminNote"></p>
+      <p class="muted small" data-i18n="adminSecurity"></p>
+      <div id="adminFields"></div>
+      <div class="actions sticky">
+        <button type="button" class="btn" id="resetCfg" data-i18n="resetCfg"></button>
+        <label class="btn"><span data-i18n="importCfg"></span><input type="file" id="importCfg" accept=".json" hidden></label>
+        <button type="button" class="btn" id="exportCfg" data-i18n="exportCfg"></button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="closeAdmin" data-i18n="close"></button>
+        <button type="button" class="btn primary" id="saveCfg" data-i18n="save"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>
