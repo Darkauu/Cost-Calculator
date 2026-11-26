@@ -98,12 +98,16 @@ test('material desconocido lanza error', () => {
   assert.throws(() => computeQuote({ ...base, material: 'XYZ' }, cfg));
 });
 
-test('packaging por unidad y por pedido entra al costo', () => {
+test('packaging e insumos: "gastos adicionales de empaquetado", al costo', () => {
   const a = computeQuote({ ...base, quantity: 10 }, cfg);
-  const b = computeQuote({ ...base, quantity: 10, packaging: 'basic' }, cfg);
+  const b = computeQuote({ ...base, quantity: 10, packaging: 'basic', supplies: { ring: 1 } }, cfg);
   close(b.breakdown.packaging, 0.18 * 10 + 0.10);
-  close(b.cost - a.cost, b.breakdown.packaging);
+  close(b.extras.packaging, 0.18 * 10 + 0.10 + 0.12 * 10);
+  close(b.cost, a.cost, 1e-9);                       // no es costo de producción
+  close(b.tiers.recommended.profit, a.tiers.recommended.profit, 0.5);
   assert.ok(b.tiers.minimum.margin >= cfg.minMargin - 1e-9);
+  const l = b.lines(b.tiers.recommended.price);
+  close(l.packaging, b.extras.packaging);
 });
 
 test('insumos extra por unidad', () => {
@@ -120,11 +124,11 @@ test('entrega incluida: se suma al precio y no se come el margen', () => {
   assert.equal(b.tiers.recommended.clientTotal, b.tiers.recommended.price);
 });
 
-test('entrega aparte: no cambia el precio, sí el total del cliente', () => {
-  const a = computeQuote(base, cfg);
-  const b = computeQuote({ ...base, shipping: 'outer', shippingMode: 'separate' }, cfg);
-  assert.equal(b.tiers.recommended.price, a.tiers.recommended.price);
-  close(b.tiers.recommended.clientTotal, a.tiers.recommended.price + 7);
+test('envío: línea aparte "gastos adicionales de envío" al costo', () => {
+  const b = computeQuote({ ...base, shipping: 'outer' }, cfg);
+  const l = b.lines(b.tiers.recommended.price);
+  close(l.shipping, 7);
+  close(l.items[0].total + l.packaging + l.shipping + l.fee, b.tiers.recommended.price);
 });
 
 test('comisión de pago: el precio sube para conservar el margen', () => {
@@ -182,7 +186,7 @@ test('listas del admin: reemplazan a las de fábrica y aceptan el formato anteri
   assert.deepEqual(c.shipping.city, { name: 'Delivery Ciudad de Panamá', cost: 5 });
   assert.equal(c.paymentFees.card.pct, 0.05);
   const q = computeQuote({ ...base, shipping: 'city', payment: 'card' }, c);
-  close(q.shipping.included, 5);
+  close(q.shipping.amount, 5);
   close(q.feePct, 0.05);
 });
 
@@ -206,11 +210,15 @@ test('pedido con varios modelos: cada uno con sus parámetros', () => {
   assert.equal(o.items[1].breakdown.supplies > 0, true);
   // el costo por pedido del packaging se cuenta una sola vez
   close(o.breakdown.packaging, 0.18 * 22 + 0.10);
-  close(o.cost, o.items[0].cost + o.items[1].cost + 0.10);
+  close(o.cost, o.items[0].cost + o.items[1].cost);
+  close(o.extras.packaging, 0.18 * 22 + 0.10 + 0.15 * 4 * 2);
   const { minimum, recommended, premium } = o.tiers;
   assert.ok(minimum.price <= recommended.price && recommended.price <= premium.price);
   assert.ok(minimum.margin >= cfg.minMargin - 1e-9, 'el mínimo respeta el margen mínimo');
-  assert.ok(recommended.price >= o.items[0].tiers.recommended.price + o.items[1].tiers.recommended.price);
+  assert.ok(recommended.price >= o.items[0].tiers.recommended.price + o.items[1].tiers.recommended.price - 1);
+  // las líneas del cliente suman el precio, y cada modelo mantiene su precio por pieza
+  const l = o.lines(recommended.price);
+  close(l.items.reduce((a, x) => a + x.total, 0) + l.packaging + l.shipping + l.fee, recommended.price);
   for (const key of ['minimum', 'recommended', 'premium']) {
     const tr = o.tiers[key];
     close(o.split(tr.price).reduce((a, [, v]) => a + v, 0), tr.price + tr.tax);
@@ -235,4 +243,29 @@ test('pedido mínimo se aplica al pedido, no a cada modelo', () => {
 
 test('pedido vacío lanza error', () => {
   assert.throws(() => computeOrder([], orderOpts, cfg));
+});
+
+test('preparación: se cobra una vez, no por pieza (5 min + 7 min × cantidad)', () => {
+  const job = { ...base, grams: 4, hours: 7 / 60, prepHours: 5 / 60 };
+  const q1 = computeQuote({ ...job, quantity: 1 }, cfg);
+  const q9 = computeQuote({ ...job, quantity: 9 }, cfg);
+  close(q9.hours.total, 5 / 60 + 9 * 7 / 60);
+  close(q9.breakdown.machine, (5 / 60 + 9 * 7 / 60) * machineRatePerHour(cfg));
+  close(q9.prepCost, q1.prepCost);
+});
+
+test('el precio por pieza (y por gramo) no cambia con la cantidad, salvo el descuento', () => {
+  const big = mergeConfig(cfg, { minOrderPrice: 0, roundingStep: 0.01 });
+  const job = { ...base, grams: 20, hours: 0.8, prepHours: 0.1 };
+  const unit = (n) => { const q = computeQuote({ ...job, quantity: n }, big); return q.lines(q.tiers.recommended.price).items[0].unit; };
+  close(unit(3), unit(7), 0.02);                      // mismo precio por pieza sin descuento
+  close(unit(10), unit(7) * (1 - 0.05), 0.02);        // 10+ → 5 %
+  close(unit(50), unit(7) * (1 - 0.15), 0.02);        // 50+ → 15 %
+});
+
+test('alerta de mercado: solo el precio de las piezas, sin insumos ni preparación', () => {
+  const job = { ...base, grams: 3, hours: 0.15, prepHours: 0.1, quantity: 20, complexity: 1 };
+  const plain = computeQuote(job, cfg);
+  const withNfc = computeQuote({ ...job, suppliesPerUnit: 1.5, packaging: 'gift' }, cfg);
+  assert.equal(withNfc.warnings.length, plain.warnings.length);
 });

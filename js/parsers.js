@@ -224,6 +224,16 @@ export function scanToolChanges(text) {
 }
 
 // ---------- G-code (Bambu Studio / Orca / Prusa) ----------
+// Preparación de la impresora (calentado, nivelado, calibración): Bambu Studio escribe
+// "model printing time: 7m; total estimated time: 12m" → 5 min de preparación.
+export function gcodePrepHours(text) {
+  const head = text.slice(0, 200000);
+  const mt = /model printing time:\s*([^;\n]+)/i.exec(head);
+  const tt = /total estimated time:\s*([^;\n]+)/i.exec(head);
+  const a = parseDuration(mt?.[1]), b = parseDuration(tt?.[1]);
+  return a != null && b != null && b > a ? (b - a) / 3600 : 0;
+}
+
 export function parseGcode(text) {
   // Solo se leen encabezado y final, donde los slicers escriben el resumen.
   const head = text.slice(0, 200000);
@@ -264,7 +274,7 @@ export function parseGcode(text) {
 
   if (seconds == null || grams == null) throw new Error('No se encontró tiempo/peso en el G-code. Exporta desde Bambu Studio.');
   const { changes, purgeGrams } = scanToolChanges(text);
-  return { grams, hours: seconds / 3600, filaments, plates: 1, changes, purgeGrams };
+  return { grams, hours: seconds / 3600, prepHours: gcodePrepHours(text), filaments, plates: 1, changes, purgeGrams };
 }
 
 // ---------- 3MF ----------
@@ -328,12 +338,14 @@ export function parse3MF(buffer) {
     try { sliced = parseGcode(strFromU8(files[gkeys[0]])); } catch { /* sin datos */ }
   } else if (sliced && gkeys.length) {
     // Cambios de color y purga: solo están en el G-code de cada placa.
-    let changes = 0, purgeGrams = 0;
+    let changes = 0, purgeGrams = 0, prepHours = 0;
     for (const k of gkeys) {
-      const r = scanToolChanges(strFromU8(files[k]));
+      const text = strFromU8(files[k]);
+      const r = scanToolChanges(text);
       changes += r.changes; purgeGrams += r.purgeGrams;
+      prepHours += gcodePrepHours(text);
     }
-    sliced = { ...sliced, changes, purgeGrams };
+    sliced = { ...sliced, changes, purgeGrams, prepHours };
   }
 
   // Geometría

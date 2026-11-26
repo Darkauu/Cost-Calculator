@@ -52,7 +52,7 @@ function newItem(from) {
     form: {
       material: from?.form.material || mats[0], quantity: 1, finish: 'none', perFile: 1,
       printer: from?.form.printer || 'printer', complexity: 'auto', quality: 'standard',
-      suppliesOther: 0, supplies: {}, manualOpen: false, grams: 0, h: 0, m: 0, s: 0,
+      suppliesOther: 0, supplies: {}, manualOpen: false, grams: 0, h: 0, m: 0, s: 0, ph: 0, pm: 0, ps: 0,
     },
   };
 }
@@ -74,6 +74,7 @@ function readForm() {
       .map((el) => [el.dataset.supply, Math.max(0, parseFloat(el.value) || 0)]).filter(([, v]) => v > 0)),
     manualOpen: $('manual').open,
     grams: n('manualGrams'), h: n('manualH'), m: n('manualM'), s: n('manualS'),
+    ph: n('prepH'), pm: n('prepM'), ps: n('prepS'),
   };
 }
 function saveForm() { const it = cur(); if (it) it.form = readForm(); }
@@ -93,13 +94,14 @@ function loadForm(it) {
   $('manual').open = f.manualOpen;
   $('manualGrams').value = f.grams;
   $('manualH').value = f.h; $('manualM').value = f.m; $('manualS').value = f.s;
+  $('prepH').value = f.ph || 0; $('prepM').value = f.pm || 0; $('prepS').value = f.ps || 0;
 }
 
 function manualOf(it) {
   const f = it.form;
   if (!f.manualOpen) return null;
   const h = hmsToHours(f.h, f.m, f.s);
-  return f.grams > 0 && h > 0 ? { grams: f.grams, hours: h } : null;
+  return f.grams > 0 && h > 0 ? { grams: f.grams, hours: h, prepHours: hmsToHours(f.ph, f.pm, f.ps) } : null;
 }
 const isEmpty = (it) => !it.fileName && !manualOf(it);
 
@@ -108,7 +110,6 @@ function orderOptions() {
   return {
     packaging: $('packaging').value,
     shipping: $('shipping').value,
-    shippingMode: document.querySelector('input[name=shippingMode]:checked').value,
     payment: $('payment').value,
     itbms: $('itbms').checked,
     urgent: document.querySelector('input[name=urgency]:checked').value === 'urgent',
@@ -124,24 +125,26 @@ function jobFor(it) {
   const autoLevel = it.analysis?.complexity.level;
   const level = f.complexity === 'auto' ? (autoLevel || 2) : +f.complexity;
 
-  let grams, hours, source, exact = false, estimate = null;
+  let grams, hours, prepHours = 0, source, exact = false, estimate = null;
   if (manual) {
-    ({ grams, hours } = manual); source = 'manual'; exact = true;
+    ({ grams, hours, prepHours } = manual); source = 'manual'; exact = true;
   } else if (it.sliced) {
-    // Una placa con varias piezas iguales: cada unidad lleva su parte del tiempo y del material.
-    grams = it.sliced.grams / f.perFile; hours = it.sliced.hours / f.perFile; source = 'exact'; exact = true;
+    // La preparación (total − tiempo del modelo) va aparte; una placa con varias piezas
+    // iguales reparte el tiempo de impresión y el material entre ellas.
+    prepHours = Math.min(it.sliced.prepHours || 0, it.sliced.hours);
+    grams = it.sliced.grams / f.perFile; hours = (it.sliced.hours - prepHours) / f.perFile; source = 'exact'; exact = true;
   } else if (it.analysis) {
     estimate = estimatePrint({ ...it.analysis, complexity: { level } }, {
       material: cfg.materials[material], quality: cfg.qualities[f.quality], estimation: cfg.estimation,
     });
-    grams = estimate.grams; hours = estimate.hours; source = 'estimate';
+    grams = estimate.grams; hours = estimate.hours; prepHours = estimate.prepHours; source = 'estimate';
   } else {
     return null;
   }
   return {
     material, quality: f.quality, quantity: f.quantity, finish: f.finish, complexity: level,
     printer: f.printer, suppliesPerUnit: f.suppliesOther, supplies: f.supplies,
-    grams, hours, exact, source, estimate,
+    grams, hours, prepHours, exact, source, estimate,
   };
 }
 
@@ -167,20 +170,17 @@ function recompute() {
   renderQuote(state.quote);
 }
 
-// Parte del precio del pedido que le toca a cada modelo (proporcional a su precio por separado).
-function allocated(k, key = 'recommended') {
-  const q = state.quote;
-  const total = q.items.reduce((a, x) => a + x.tiers[key].price, 0);
-  return total > 0 ? q.tiers[key].price * q.items[k].tiers[key].price / total : 0;
-}
+// Parte del precio recomendado que le toca a cada modelo (preparación + piezas, sin gastos adicionales).
+const itemLine = (k) => state.quote.lines(state.quote.tiers.recommended.price).items[k];
 
 function renderModels() {
   const q = state.quote;
   $('modelList').innerHTML = state.items.map((it, i) => {
     const k = state.entries.findIndex((e) => e.item === it);
     const f = it.form;
-    const meta = `${f.quantity} × ${f.material} · ${t(`finish_${f.finish}`)}`;
-    const sub = q && k >= 0 ? money(allocated(k)) : t('noData');
+    const line = q && k >= 0 ? itemLine(k) : null;
+    const meta = `${f.quantity} × ${f.material} · ${t(`finish_${f.finish}`)}${line ? ` · ${money(line.unit)} ${t('perUnit')}` : ''}`;
+    const sub = line ? money(line.total) : t('noData');
     return `<li class="${i === state.active ? 'active' : ''}">
       <button type="button" class="model-sel" data-sel="${i}" aria-pressed="${i === state.active}">
         <span class="model-name">${esc(itemName(it, i))}</span><span class="muted small">${esc(meta)}</span>
@@ -236,7 +236,11 @@ function renderAnalysis(job) {
   }
   if (job) {
     rows.push([t('weight'), `${num(job.grams)} g`]);
-    rows.push([t('time'), duration(job.hours)]);
+    rows.push([t('pieceTime'), duration(job.hours)]);
+    if (job.prepHours > 0) {
+      rows.push([t('prepStat'), duration(job.prepHours)]);
+      rows.push([t('totalTime'), `${duration(job.prepHours + job.hours * job.quantity)} (${duration(job.prepHours)} + ${duration(job.hours)} × ${job.quantity})`]);
+    }
     if (job.estimate) rows.push([t('supports'), `${num(job.estimate.supportGrams)} g`]);
   }
   if (state.sliced?.filaments?.length) {
@@ -271,7 +275,7 @@ function renderQuote(q) {
     return `<div class="tier ${main ? 'main' : ''}">
       <span class="name">${t(`tier_${key}`)}</span>
       <span class="price">${money(tr.price)}</span>
-      ${q.quantity > 1 && !multi ? `<span class="unit">${money(tr.unit)} ${t('perUnit')}</span>` : ''}
+      ${q.quantity > 1 && !multi ? `<span class="unit">${money(q.lines(tr.price).items[0].unit)} ${t("perUnit")}</span>` : ''}
       ${tr.clientTotal > tr.price + 0.005 ? `<span class="total">${t('clientTotal')}: ${money(tr.clientTotal)}</span>` : ''}
       <span class="hint">${t(`tier_${key}_hint`)}</span>
       <span class="pill ${tr.status}">${t('margin')} ${pct(tr.margin)}</span>
@@ -283,8 +287,8 @@ function renderQuote(q) {
   if (multi) notes.push(`<li><span>${t('orderModels', { n: q.items.length })}</span><b>${q.quantity} ${t('units')}</b></li>`);
   if (q.discountPct) notes.push(`<li><span>${t('discountApplied')}</span><b>−${pct(q.discountPct)}</b></li>`);
   if (q.urgent) notes.push(`<li><span>${t('urgentApplied')}</span><b>+${pct(state.cfg.urgencyMultiplier - 1)}</b></li>`);
-  if (q.shipping.included) notes.push(`<li><span>${t('shipIncludedNote')}</span><b>${money(q.shipping.included)}</b></li>`);
-  if (q.shipping.separate) notes.push(`<li><span>${t('shipSeparateNote')}</span><b>+${money(q.shipping.separate)}</b></li>`);
+  if (q.extras.packaging > 0.004) notes.push(`<li><span>${t('packNote')}</span><b>${money(q.extras.packaging)}</b></li>`);
+  if (q.extras.shipping > 0.004) notes.push(`<li><span>${t('shipNote')}</span><b>${money(q.extras.shipping)}</b></li>`);
   if (q.feePct) notes.push(`<li><span>${t('feeNote')}</span><b>${num(q.feePct * 100, 1)}%</b></li>`);
   if (q.taxRate) notes.push(`<li><span>${t('taxNote')}</span><b>+${money(q.tiers.recommended.tax)}</b></li>`);
   const share = Math.max(0, q.goalShare);
@@ -352,36 +356,39 @@ function renderBreakdown(q) {
   if (!state.admin) return;
   const b = q.breakdown;
   const multi = q.items.length > 1;
+  const prepH = q.hours.prep || 0;
   const rows = [
     [t('b_material'), b.material, `${num(q.grams.total)} g`],
-    [t('b_machine'), b.machine, multi ? duration(q.hours.total) : `${q.printer} · ${duration(q.hours.total)} × ${money(b.machineRate)}${t('perHour')}`],
+    [t('b_machine'), b.machine, multi ? duration(q.hours.total) : `${q.printer} · ${duration(q.hours.total)}${prepH ? ` (${t('b_prep')} ${duration(prepH)})` : ''} × ${money(b.machineRate)}${t('perHour')}`],
     [t('b_overhead'), b.overhead, multi ? '' : `${money(b.overheadRate)}${t('perHour')}`],
     [t('b_labor'), b.labor, `${Math.round(b.laborMinutes)} min`],
     [t('b_extras'), b.extras, ''],
-    [t('b_supplies'), b.supplies, ''],
-    [t('b_packaging'), b.packaging, ''],
     [t('b_risk'), b.risk, multi ? '' : pct(state.cfg.failureRiskByComplexity[q.complexity - 1])],
   ].filter(([, v], i) => i < 3 || v > 0.004);
   const rec = q.tiers.recommended;
   const after = [];
-  if (q.shipping.included) after.push([t('b_shipping'), q.shipping.included]);
-  if (rec.fee > 0.004) after.push([t('b_fee'), rec.fee]);
-  after.push([t('b_profit'), rec.profit]);
+  if (q.extras.packaging > 0.004) after.push([`${t('b_extrasTitle')}`, q.extras.packaging, `${t('b_supplies')} ${money(b.supplies)} · ${t('b_packaging')} ${money(b.packaging)}`]);
+  if (q.extras.shipping > 0.004) after.push([t('b_shipping'), q.extras.shipping, '']);
+  if (rec.fee > 0.004) after.push([t('b_fee'), rec.fee, '']);
+  after.push([t('b_profit'), rec.profit, '']);
+  const perModel = state.entries.map((e, k) => {
+    const iq = q.items[k];
+    const li = itemLine(k);
+    return `<tr><td>${esc(itemName(e.item, e.i))} <span class="muted small">${iq.quantity} × · ${t('complexity')} ${iq.complexity} · ${iq.printer}${iq.discountPct ? ` · −${pct(iq.discountPct)}` : ''}</span></td>
+      <td>${money(li.unit)}</td><td>${money(li.prep)}</td><td>${money(iq.cost)}</td><td>${pct(iq.tiers.recommended.margin)}</td></tr>`;
+  }).join('');
   el.innerHTML = `<h2>${t('breakdown')}</h2>
     <table>
       ${rows.map(([k, v, d]) => `<tr><td>${esc(k)} <span class="muted small">${esc(d)}</span></td><td>${money(v)}</td></tr>`).join('')}
       <tr class="total"><td>${t('b_cost')}</td><td>${money(q.cost)}</td></tr>
-      ${after.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${money(v)}</td></tr>`).join('')}
+      ${after.map(([k, v, d]) => `<tr><td>${esc(k)} <span class="muted small">${esc(d)}</span></td><td>${money(v)}</td></tr>`).join('')}
       <tr class="total"><td>${t('b_price')}</td><td>${money(rec.price)}</td></tr>
       ${rec.tax ? `<tr><td>${t('b_tax')}</td><td>${money(rec.tax)}</td></tr>` : ''}
     </table>
-    ${multi ? `<h3>${t('b_perModel')}</h3><table>
-      <tr><th>${t('quoteItem')}</th><th>${t('b_cost')}</th><th>${t('tier_recommended')}</th><th>${t('margin')}</th></tr>
-      ${state.entries.map((e, k) => {
-        const iq = q.items[k];
-        return `<tr><td>${esc(itemName(e.item, e.i))} <span class="muted small">${iq.quantity} × · ${t('complexity')} ${iq.complexity} · ${iq.printer}</span></td><td>${money(iq.cost)}</td><td>${money(allocated(k))}</td><td>${pct(iq.tiers.recommended.margin)}</td></tr>`;
-      }).join('')}</table>
-      <p class="muted small">${t('b_perModelNote')}</p>`
+    <h3>${t(multi ? 'b_perModel' : 'b_unitPrice')}</h3><table>
+      <tr><th>${t('quoteItem')}</th><th>${t('b_unitPrice')}</th><th>${t('b_prep')}</th><th>${t('b_cost')}</th><th>${t('margin')}</th></tr>
+      ${perModel}</table>
+    ${multi ? `<p class="muted small">${t('b_perModelNote')}</p>`
     : `<p class="muted small">${t(q.profitDriver === 'goal' ? 'b_driver_goal' : 'b_driver_margin')}</p>`}`;
 }
 
@@ -496,52 +503,75 @@ function newQuoteNumber() {
 }
 const pdfTitle = () => t('pdfTitle', { no: state.quoteNo || (state.quoteNo = newQuoteNumber()) });
 
-function quoteLines() {
-  const q = state.quote;
-  return state.entries.map((e, k) => {
-    const j = e.job;
-    const sub = allocated(k);
+// Datos de la cotización para el cliente: precio recomendado, con las líneas en el método de pago
+// más barato y el total de cada método de pago (los que tienen la misma comisión van juntos).
+function clientDoc() {
+  const order = orderOptions();
+  const jobs = state.entries.map((e) => e.job);
+  const methods = Object.entries(state.cfg.paymentFees || {}).map(([id, v]) => ({
+    id, name: v.name ?? id, pct: typeof v === 'number' ? v : (v.pct || 0),
+  }));
+  const quotes = methods.map((m) => ({ ...m, q: computeOrder(jobs, { ...order, payment: m.id }, state.cfg) }));
+  const base = quotes.length ? quotes.reduce((a, x) => (x.pct < a.pct ? x : a)) : { q: state.quote, pct: 0 };
+  const bq = base.q;
+  const price = bq.tiers.recommended.price;
+  const L = bq.lines(price);
+  const r2 = (v) => Math.round(v * 100) / 100;
+  let pieces = 0;
+  const items = state.entries.map((e, k) => {
+    const li = L.items[k];
+    const unit = r2(li.unit);
+    pieces += unit * li.quantity;
     return {
-      name: itemName(e.item, e.i), job: j, sub, unit: sub / j.quantity,
-      quality: e.item.sliced && !manualOf(e.item) ? '—' : t(`quality_${j.quality}`),
-      qty: q.items[k].quantity,
+      name: itemName(e.item, e.i), job: e.job, qty: li.quantity, unit, pieces: r2(unit * li.quantity),
+      discount: bq.items[k].discountPct || 0,
+      quality: e.item.sliced && !manualOf(e.item) ? '—' : t(`quality_${e.job.quality}`),
     };
   });
+  const groups = [];
+  for (const m of quotes) {
+    let g = groups.find((x) => Math.abs(x.pct - m.pct) < 1e-9);
+    if (!g) groups.push(g = { pct: m.pct, names: [], tier: m.q.tiers.recommended });
+    g.names.push(m.name);
+  }
+  return {
+    items, prep: Math.max(0, r2(L.product - pieces)), packaging: L.packaging, shipping: L.shipping,
+    subtotal: L.product + L.packaging + L.shipping, taxRate: bq.taxRate, groups, urgent: bq.urgent,
+  };
 }
 
+const payLabel = (g) => `${g.names.join(' / ')}${g.pct ? ` · ${t('q_feeIncl', { pct: `${num(g.pct * 100, 1)} %` })}` : ''}`;
+const payTotal = (g) => money(g.tier.clientTotal) + (g.tier.tax ? ` ${t('q_withTax')}` : '');
+
 function quoteText() {
-  const q = state.quote;
-  const rec = q.tiers.recommended;
-  const lines = [t('quoteHeader')];
-  for (const l of quoteLines()) {
+  const d = clientDoc();
+  const lines = [pdfTitle(), ''];
+  for (const l of d.items) {
     lines.push(
       `${t('quoteItem')}: ${l.name}`,
       `${t('material')}: ${l.job.material} · ${t('quality')}: ${l.quality} · ${t('finish')}: ${t(`finish_${l.job.finish}`)}`,
-      `${t('quantity')}: ${l.qty} × ${money(l.unit)} = ${money(l.sub)}`,
+      `${t('quantity')}: ${l.qty} × ${money(l.unit)} = ${money(l.pieces)}${l.discount ? ` (${t('q_discount', { pct: pct(l.discount) })})` : ''}`,
+      '',
     );
-    if (q.items.length > 1) lines.push('');
   }
-  if (q.items.length > 1) lines.push(`${t('quoteTotal')}: ${money(rec.price)}`);
-  lines.push(
-    ...(q.shipping.included ? [t('quoteShipIncluded')] : []),
-    ...(rec.tax ? [`${t('b_tax')}: ${money(rec.tax)}`] : []),
-    ...(q.shipping.separate ? [`${t('shipping')}: ${money(q.shipping.separate)}`] : []),
-    ...(rec.clientTotal > rec.price + 0.005 ? [`${t('clientTotal')}: ${money(rec.clientTotal)}`] : []),
-    `${t('urgency')}: ${t(q.urgent ? 'urgency_urgent' : 'urgency_normal')}`,
-    t('quoteValid'),
-  );
+  if (d.prep > 0.004) lines.push(`${t('q_prep')}: ${money(d.prep)}`);
+  if (d.packaging > 0.004) lines.push(`${t('q_packaging')}: ${money(d.packaging)}`);
+  if (d.shipping > 0.004) lines.push(`${t('q_shipping')}: ${money(d.shipping)}`);
+  lines.push(`${t('q_subtotal')}: ${money(d.subtotal)}`, '', `${t('q_payments')}:`);
+  for (const g of d.groups) lines.push(`• ${payLabel(g)}: ${payTotal(g)}`);
+  lines.push('', `${t('urgency')}: ${t(d.urgent ? 'urgency_urgent' : 'urgency_normal')}`, t('quoteValid'));
   return lines.join('\n');
 }
 
 function buildPrintSheet() {
   if (!state.quote) return;
-  const q = state.quote;
-  const rec = q.tiers.recommended;
+  const d = clientDoc();
   const canvas = $('viewer').querySelector('canvas');
   let img = '';
-  if (q.items.length === 1 && state.positions && canvas) { try { img = `<img src="${canvas.toDataURL('image/png')}" alt="">`; } catch { /* nada */ } }
-  const rows = quoteLines().map((l) => `<tr><td>${esc(l.name)}</td><td>${esc(l.job.material)}</td><td>${t(`finish_${l.job.finish}`)}</td>
-        <td class="num">${l.qty}</td><td class="num">${money(l.unit)}</td><td class="num"><b>${money(l.sub)}</b></td></tr>`).join('');
+  if (d.items.length === 1 && state.positions && canvas) { try { img = `<img src="${canvas.toDataURL('image/png')}" alt="">`; } catch { /* nada */ } }
+  const rows = d.items.map((l) => `<tr><td>${esc(l.name)}${l.discount ? `<br><span class="small">${t('q_discount', { pct: pct(l.discount) })}</span>` : ''}</td><td>${esc(l.job.material)}</td><td>${t(`finish_${l.job.finish}`)}</td>
+        <td class="num">${l.qty}</td><td class="num">${money(l.unit)}</td><td class="num"><b>${money(l.pieces)}</b></td></tr>`).join('');
+  const extra = (label, v) => (v > 0.004 ? `<tr><td colspan="5">${label}</td><td class="num">${money(v)}</td></tr>` : '');
   $('printSheet').innerHTML = `
     <h1>${esc(pdfTitle())}</h1>
     <div>${new Date().toLocaleDateString(locale())}</div>
@@ -549,12 +579,16 @@ function buildPrintSheet() {
     <table>
       <tr><th>${t('quoteItem')}</th><th>${t('material')}</th><th>${t('finish')}</th><th class="num">${t('quantity')}</th><th class="num">${t('perUnit')}</th><th class="num">${t('quoteTotal')}</th></tr>
       ${rows}
-      ${q.items.length > 1 ? `<tr><td colspan="5"><b>${t('quoteTotal')}</b></td><td class="num"><b>${money(rec.price)}</b></td></tr>` : ''}
+      ${extra(t('q_prep'), d.prep)}
+      ${extra(t('q_packaging'), d.packaging)}
+      ${extra(t('q_shipping'), d.shipping)}
+      <tr><td colspan="5"><b>${t('q_subtotal')}</b></td><td class="num"><b>${money(d.subtotal)}</b></td></tr>
     </table>
-    ${rec.tax ? `<p>${t('b_tax')}: ${money(rec.tax)}</p>` : ''}
-    ${q.shipping.separate ? `<p>${t('shipping')}: ${money(q.shipping.separate)}</p>` : ''}
-    ${rec.clientTotal > rec.price + 0.005 ? `<p><b>${t('clientTotal')}: ${money(rec.clientTotal)}</b></p>` : ''}
-    <p>${t('urgency')}: ${t(q.urgent ? 'urgency_urgent' : 'urgency_normal')}</p>
+    <h2 class="pay-title">${t('q_payments')}</h2>
+    <table>
+      ${d.groups.map((g) => `<tr><td>${esc(payLabel(g))}</td><td class="num"><b>${payTotal(g)}</b></td></tr>`).join('')}
+    </table>
+    <p>${t('urgency')}: ${t(d.urgent ? 'urgency_urgent' : 'urgency_normal')}</p>
     <p>${t('quoteValid')}</p>`;
 }
 
