@@ -10,7 +10,11 @@ Es una página estática: no tiene servidor ni instalación, y el archivo del cl
    - **Precio exacto:** en Bambu Studio, lamina y usa *Exportar → Exportar archivo de placa laminada* (`.gcode.3mf`), o guarda el proyecto ya laminado. Se leen el tiempo, los gramos, el material y los colores reales. Si hay más de un filamento, se marca *Multicolor* automáticamente.
    - **Precio estimado:** con un STL/OBJ/3MF sin laminar se calcula volumen, superficie, voladizos (soportes) y complejidad, y a partir de eso se estiman el peso y el tiempo.
    - **Sin archivo:** "Ingresar peso y tiempo a mano".
+   - Del G-code de cada placa también se leen los **cambios de color** del AMS y los gramos de **purga y torre** (ya vienen incluidos en el peso de Bambu Studio; se muestran para ver cuánto cuesta el multicolor).
 2. Elige material, cantidad, calidad, acabado (Ninguno · Lijado · Pintado · Multicolor) y entrega (Normal · Urgente).
+   - **Piezas en el archivo:** si la placa trae varias piezas iguales (ej. 12 llaveros), pon cuántas: el tiempo y los gramos se reparten entre ellas.
+   - **Impresora:** P2S o H2C, cada una con su costo por hora.
+   - **Packaging** (Sin · Básico · Regalo), **insumos extra por unidad** (argollas, imanes), **envío** (incluido en el precio o cobrado aparte), **método de pago** (la comisión de tarjeta se cubre subiendo el precio) y **ITBMS 7 %** (se suma al final y no cuenta como ganancia).
 3. Cotiza el precio **Recomendado**. Si el cliente negocia, escribe el precio en "Precio negociado" para ver el semáforo:
    - 🟢 margen saludable · 🟡 margen bajo · 🔴 requiere aprobación (por debajo del margen mínimo).
 4. Usa "Copiar cotización" para WhatsApp o correo, o "Imprimir / PDF".
@@ -21,36 +25,46 @@ En el visor 3D, las caras en naranja necesitan soporte.
 
 ```
 Material   = gramos × costo/kg × (1 + 5 % de desperdicio)
-Máquina    = horas × (precio impresora ÷ vida útil + kW × USD/kWh + mantenimiento)
+Máquina    = horas × (precio impresora ÷ vida útil + kW × USD/kWh + mantenimiento)   ← según P2S o H2C
+Gastos fijos = horas × (gastos fijos del mes ÷ horas vendibles al mes)
 Mano obra  = (preparación por pedido + postproceso por unidad según complejidad + acabado) × USD/h
+Insumos    = acabado + insumos extra por unidad
+Packaging  = costo por unidad × cantidad + costo por pedido
 Riesgo     = (material + máquina) × % de falla según complejidad
 Costo      = suma de todo lo anterior
 
 Ganancia   = la MAYOR entre:
              · margen objetivo según complejidad (55 % → 72 %)
              · horas de máquina × (meta mensual ÷ horas vendibles al mes)
-Precio     = costo + ganancia − descuento por cantidad, redondeado hacia arriba a $0.50
+Neto       = costo + ganancia − descuento por cantidad
              nunca por debajo del margen mínimo (35 %) ni del pedido mínimo ($5)
+Precio     = (neto + envío incluido) ÷ (1 − comisión de pago), redondeado hacia arriba a $0.50
+Cliente    = precio + ITBMS (si aplica) + envío cobrado aparte
+Margen     = (precio − comisión − envío incluido − costo) ÷ (precio − comisión − envío incluido)
 ```
+
+Así el **mínimo** sigue garantizando el margen mínimo aunque se cobre con tarjeta, se incluya el envío o se agregue packaging: la comisión y el envío no se comen la ganancia.
 
 - **Meta mensual ($300):** se reparte entre las horas de máquina que esperas vender al mes (120 h por defecto, o sea $2.50 por hora). Las impresiones largas quedan protegidas porque nunca ocupan la impresora sin aportar a la meta.
 - **Complejidad 1–5:** combina detalle fino (superficie/volumen), voladizos (% de la superficie que necesita soporte) y esbeltez (piezas altas y delgadas). Sube el tiempo, el riesgo, el postproceso y el margen. Ventas puede forzarla a mano.
 - **Sin quedar caros:** si el precio por gramo supera la referencia de mercado ($0.50/g en pedidos de 30 g o más), aparece una alerta.
 
-Ejemplos con la configuración inicial (PLA, datos exactos):
+Ejemplos con la configuración inicial (PLA, P2S, datos exactos):
 
 | Pieza | Costo | Mínimo | Recomendado | Premium |
 |---|---|---|---|---|
-| 15 g · 0.7 h · simple | $1.71 | $5.00 | $5.00 | $6.00 |
-| 50 g · 2 h · simple | $3.03 | $5.00 | $8.50 | $10.50 |
-| 120 g · 5 h · media | $5.88 | $9.50 | $18.50 | $22.50 |
-| 300 g · 14 h · compleja | $13.49 | $21.00 | $48.50 | $58.50 |
+| 15 g · 0.7 h · simple | $1.94 | $5.00 | $5.00 | $6.00 |
+| 50 g · 2 h · simple | $3.70 | $6.00 | $9.50 | $11.50 |
+| 120 g · 5 h · media | $7.54 | $12.00 | $22.00 | $26.00 |
+| 300 g · 14 h · compleja | $18.15 | $28.00 | $57.00 | $68.50 |
+
+(Sin packaging ni envío, pago en efectivo. Incluye $0.33/h de gastos fijos.)
 
 ## Administración
 
 Botón **Administración** → PIN (por defecto **`1234`**, cámbialo en el mismo panel).
 
-Ahí se editan la impresora, la electricidad, la mano de obra, la meta mensual, los márgenes, los costos por kg de cada material y la calibración. Los cambios se guardan en ese navegador. **Para que todo el equipo use los mismos valores**, pulsa *Exportar config.json* y sube ese archivo a la raíz del repositorio. La app lo carga automáticamente.
+Ahí se editan las dos impresoras, la electricidad, los gastos fijos, el ITBMS, el packaging, los costos de envío, las comisiones de pago, la mano de obra, la meta mensual, los márgenes, los costos por kg de cada material y la calibración. Los cambios se guardan en ese navegador. **Para que todo el equipo use los mismos valores**, pulsa *Exportar config.json* y sube ese archivo a la raíz del repositorio. La app lo carga automáticamente.
 
 Con el panel desbloqueado se ve además el **desglose de costos** de cada cotización.
 
@@ -69,6 +83,14 @@ Con el panel desbloqueado se ve además el **desglose de costos** de cada cotiza
 | Mano de obra | $6/h | supuesto (pon 0 si tu tiempo cuenta como ganancia) |
 | Horas vendibles/mes | 120 h | supuesto |
 | Otros materiales | $22–35/kg | supuesto |
+| Precio H2C | $2,400 | supuesto (sin módulo láser) |
+| Vida útil / consumo H2C | 8000 h · 0.25 kW | supuesto |
+| Gastos fijos al mes | $40 | supuesto (internet, software, web, contador) |
+| Packaging básico | $0.18/u + $0.10/pedido | supuesto (bolsa + sticker; tarjeta) |
+| Packaging regalo | $0.85/u + $0.25/pedido | supuesto (caja kraft) |
+| Envío | $0 · $4 · $7 · $6 | supuesto (retiro, ciudad, Oeste/Este, interior) |
+| Comisión tarjeta | 4.5 % | supuesto (Yappy, efectivo y ACH en 0 %) |
+| ITBMS | 7 % | tasa general de Panamá |
 
 ### Calibración
 

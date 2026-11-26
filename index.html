@@ -71,6 +71,7 @@
         <form id="opts" class="opts" onsubmit="return false">
           <label><span data-i18n="material"></span><select id="material"></select></label>
           <label><span data-i18n="quantity"></span><input type="number" id="quantity" value="1" min="1" step="1" inputmode="numeric"></label>
+          <label><span data-i18n="perFile"></span><input type="number" id="perFile" value="1" min="1" step="1" inputmode="numeric" data-i18n-title="perFileHint"></label>
           <fieldset class="full">
             <legend data-i18n="quality"></legend>
             <div class="seg" id="quality">
@@ -93,6 +94,32 @@
               <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
             </select>
           </label>
+          <label id="printerField"><span data-i18n="printer"></span><select id="printer"></select></label>
+          <label><span data-i18n="supplies"></span><input type="number" id="supplies" value="0" min="0" step="0.05" inputmode="decimal"></label>
+          <label><span data-i18n="packaging"></span>
+            <select id="packaging">
+              <option value="none" data-i18n="packaging_none"></option>
+              <option value="basic" data-i18n="packaging_basic" selected></option>
+              <option value="gift" data-i18n="packaging_gift"></option>
+            </select>
+          </label>
+          <label><span data-i18n="payment"></span>
+            <select id="payment">
+              <option value="cash" data-i18n="payment_cash"></option>
+              <option value="yappy" data-i18n="payment_yappy" selected></option>
+              <option value="transfer" data-i18n="payment_transfer"></option>
+              <option value="card" data-i18n="payment_card"></option>
+            </select>
+          </label>
+          <label><span data-i18n="shipping"></span><select id="shipping"></select></label>
+          <fieldset>
+            <legend data-i18n="shippingMode"></legend>
+            <div class="seg" id="shippingMode">
+              <label><input type="radio" name="shippingMode" value="included" checked><span data-i18n="shippingMode_included"></span></label>
+              <label><input type="radio" name="shippingMode" value="separate"><span data-i18n="shippingMode_separate"></span></label>
+            </div>
+          </fieldset>
+          <label class="full check"><input type="checkbox" id="itbms"><span data-i18n="itbms"></span></label>
           <fieldset class="full">
             <legend data-i18n="urgency"></legend>
             <div class="seg" id="urgency">

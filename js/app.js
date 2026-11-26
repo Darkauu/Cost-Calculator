@@ -1,7 +1,7 @@
 import { loadConfig, saveLocalConfig, clearLocalConfig, mergeConfig, DEFAULT_CONFIG } from './config.js';
 import { t, getLang, setLang, applyI18n } from './i18n.js';
 import { analyzeMesh, estimatePrint, fitsBed } from './geometry.js';
-import { computeQuote, machineRatePerHour } from './pricing.js';
+import { computeQuote, machineRatePerHour, selectPrinter } from './pricing.js';
 import { parseFile } from './parsers.js';
 
 const $ = (id) => document.getElementById(id);
@@ -48,6 +48,13 @@ function options() {
     finish: $('finish').value,
     urgent: document.querySelector('input[name=urgency]:checked').value === 'urgent',
     complexity: $('complexity').value,
+    printer: $('printer').value || 'printer',
+    packaging: $('packaging').value,
+    suppliesPerUnit: Math.max(0, parseFloat($('supplies').value) || 0),
+    shipping: $('shipping').value,
+    shippingMode: document.querySelector('input[name=shippingMode]:checked').value,
+    payment: $('payment').value,
+    itbms: $('itbms').checked,
   };
 }
 
@@ -70,7 +77,9 @@ function currentJob() {
   if (manual) {
     ({ grams, hours } = manual); source = 'manual'; exact = true;
   } else if (state.sliced) {
-    grams = state.sliced.grams; hours = state.sliced.hours; source = 'exact'; exact = true;
+    // Una placa con varias piezas iguales: cada unidad lleva su parte del tiempo y del material.
+    const perFile = Math.max(1, parseInt($('perFile').value, 10) || 1);
+    grams = state.sliced.grams / perFile; hours = state.sliced.hours / perFile; source = 'exact'; exact = true;
   } else if (state.analysis) {
     estimate = estimatePrint({ ...state.analysis, complexity: { level } }, {
       material: cfg.materials[o.material], quality: cfg.qualities[o.quality], estimation: cfg.estimation,
@@ -124,8 +133,12 @@ function renderAnalysis(job) {
     const fil = state.sliced.filaments.map((f) => `<span class="swatch" style="background:${esc(f.color.slice(0, 7) || 'transparent')}"></span>${esc(f.type)} ${num(f.grams)} g`).join('<br>');
     rows.push([t('filaments'), fil, true]);
   }
+  if (state.sliced?.changes != null && state.sliced.filaments?.length > 1) {
+    rows.push([t('colorChanges'), state.sliced.changes]);
+    rows.push([t('purge'), `${num(state.sliced.purgeGrams || 0)} g`]);
+  }
   if (state.sliced?.plates > 1) rows.push([t('plates'), state.sliced.plates]);
-  if (a) rows.push(['', fitsBed(a.sizeMm, state.cfg.printer.bedMm) ? `✓ ${t('fits')}` : `✗ ${t('notFits')}`]);
+  if (a) rows.push(['', fitsBed(a.sizeMm, currentPrinter().bedMm) ? `✓ ${t('fits')}` : `✗ ${t('notFits')}`]);
   $('stats').innerHTML = rows.map(([k, v, raw]) => `<div><dt>${esc(k)}</dt><dd>${raw ? v : esc(v)}</dd></div>`).join('');
 
   const level = job?.complexity ?? a?.complexity.level ?? 2;
@@ -148,6 +161,7 @@ function renderQuote(job, q) {
       <span class="name">${t(`tier_${key}`)}</span>
       <span class="price">${money(tr.price)}</span>
       ${q.quantity > 1 ? `<span class="unit">${money(tr.unit)} ${t('perUnit')}</span>` : ''}
+      ${tr.clientTotal > tr.price + 0.005 ? `<span class="total">${t('clientTotal')}: ${money(tr.clientTotal)}</span>` : ''}
       <span class="hint">${t(`tier_${key}_hint`)}</span>
       <span class="pill ${tr.status}">${t('margin')} ${pct(tr.margin)}</span>
     </div>`;
@@ -157,6 +171,10 @@ function renderQuote(job, q) {
   const notes = [];
   if (q.discountPct) notes.push(`<li><span>${t('discountApplied')}</span><b>−${pct(q.discountPct)}</b></li>`);
   if (q.urgent) notes.push(`<li><span>${t('urgentApplied')}</span><b>+${pct(state.cfg.urgencyMultiplier - 1)}</b></li>`);
+  if (q.shipping.included) notes.push(`<li><span>${t('shipIncludedNote')}</span><b>${money(q.shipping.included)}</b></li>`);
+  if (q.shipping.separate) notes.push(`<li><span>${t('shipSeparateNote')}</span><b>+${money(q.shipping.separate)}</b></li>`);
+  if (q.feePct) notes.push(`<li><span>${t('feeNote')}</span><b>${num(q.feePct * 100, 1)}%</b></li>`);
+  if (q.taxRate) notes.push(`<li><span>${t('taxNote')}</span><b>+${money(q.tiers.recommended.tax)}</b></li>`);
   const share = Math.max(0, q.goalShare);
   notes.push(`<li><span>${t('goalShare')} (${money(state.cfg.monthlyProfitGoal)})</span><b>${num(share * 100, 1)}%</b></li>
     <li><div class="goal-bar" style="flex:1"><i style="width:${Math.min(100, share * 100)}%"></i></div></li>`);
@@ -166,7 +184,7 @@ function renderQuote(job, q) {
 
   const warnings = [];
   if (state.analysis) {
-    if (!fitsBed(state.analysis.sizeMm, state.cfg.printer.bedMm)) warnings.push(t('w_notFits'));
+    if (!fitsBed(state.analysis.sizeMm, currentPrinter().bedMm)) warnings.push(t('w_notFits'));
     const maxDim = Math.max(...state.analysis.sizeMm);
     if (maxDim < 3 || maxDim > 2000) warnings.push(t('w_scale'));
   }
@@ -194,15 +212,26 @@ function renderBreakdown(q) {
   const b = q.breakdown;
   const rows = [
     [t('b_material'), b.material, `${num(q.grams.total)} g`],
-    [t('b_machine'), b.machine, `${duration(q.hours.total)} × ${money(b.machineRate)}${t('perHour')}`],
+    [t('b_machine'), b.machine, `${q.printer} · ${duration(q.hours.total)} × ${money(b.machineRate)}${t('perHour')}`],
+    [t('b_overhead'), b.overhead, `${money(b.overheadRate)}${t('perHour')}`],
     [t('b_labor'), b.labor, `${Math.round(b.laborMinutes)} min`],
     [t('b_extras'), b.extras, ''],
+    [t('b_supplies'), b.supplies, ''],
+    [t('b_packaging'), b.packaging, ''],
     [t('b_risk'), b.risk, pct(state.cfg.failureRiskByComplexity[q.complexity - 1])],
-  ];
+  ].filter(([, v], i) => i < 3 || v > 0.004);
+  const rec = q.tiers.recommended;
+  const after = [];
+  if (q.shipping.included) after.push([t('b_shipping'), q.shipping.included]);
+  if (rec.fee > 0.004) after.push([t('b_fee'), rec.fee]);
+  after.push([t('b_profit'), rec.profit]);
   el.innerHTML = `<h2>${t('breakdown')}</h2>
     <table>
       ${rows.map(([k, v, d]) => `<tr><td>${esc(k)} <span class="muted small">${esc(d)}</span></td><td>${money(v)}</td></tr>`).join('')}
       <tr class="total"><td>${t('b_cost')}</td><td>${money(q.cost)}</td></tr>
+      ${after.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${money(v)}</td></tr>`).join('')}
+      <tr class="total"><td>${t('b_price')}</td><td>${money(rec.price)}</td></tr>
+      ${rec.tax ? `<tr><td>${t('b_tax')}</td><td>${money(rec.tax)}</td></tr>` : ''}
     </table>
     <p class="muted small">${t(q.profitDriver === 'goal' ? 'b_driver_goal' : 'b_driver_margin')}</p>`;
 }
@@ -221,6 +250,7 @@ async function handleFile(file) {
     state.analysis = parsed.positions ? analyzeMesh(parsed.positions, { supportAngleDeg: state.cfg.estimation.supportAngleDeg }) : null;
     state.notices = [];
     $('manual').open = false;
+    $('perFile').value = 1;
 
     // Datos del laminado: material y multicolor automáticos
     if (state.sliced) {
@@ -292,6 +322,10 @@ function quoteText() {
     `${t('quoteItem')}: ${state.fileName || '—'}`,
     `${t('material')}: ${j.material} · ${t('quality')}: ${state.sliced && !manualValues() ? '—' : t(`quality_${j.quality}`)} · ${t('finish')}: ${t(`finish_${j.finish}`)}`,
     `${t('quantity')}: ${q.quantity} × ${money(rec.unit)} = ${money(rec.price)}`,
+    ...(q.shipping.included ? [t('quoteShipIncluded')] : []),
+    ...(rec.tax ? [`${t('b_tax')}: ${money(rec.tax)}`] : []),
+    ...(q.shipping.separate ? [`${t('shipping')}: ${money(q.shipping.separate)}`] : []),
+    ...(rec.clientTotal > rec.price + 0.005 ? [`${t('clientTotal')}: ${money(rec.clientTotal)}`] : []),
     `${t('urgency')}: ${t(j.urgent ? 'urgency_urgent' : 'urgency_normal')}`,
     t('quoteValid'),
   ];
@@ -314,6 +348,9 @@ function buildPrintSheet() {
       <tr><td>${esc(state.fileName || '—')}</td><td>${esc(j.material)}</td><td>${t(`finish_${j.finish}`)}</td>
         <td class="num">${q.quantity}</td><td class="num">${money(rec.unit)}</td><td class="num"><b>${money(rec.price)}</b></td></tr>
     </table>
+    ${rec.tax ? `<p>${t('b_tax')}: ${money(rec.tax)}</p>` : ''}
+    ${q.shipping.separate ? `<p>${t('shipping')}: ${money(q.shipping.separate)}</p>` : ''}
+    ${rec.clientTotal > rec.price + 0.005 ? `<p><b>${t('clientTotal')}: ${money(rec.clientTotal)}</b></p>` : ''}
     <p>${t('urgency')}: ${t(j.urgent ? 'urgency_urgent' : 'urgency_normal')}</p>
     <p>${t('quoteValid')}</p>`;
 }
@@ -329,7 +366,11 @@ async function sha256(text) {
 
 const ADMIN_SECTIONS = [
   ['sec_printer', [['printer.name', 'text'], ['printer.priceUsd'], ['printer.lifeHours'], ['printer.powerKw'], ['printer.maintenancePerHour']]],
-  ['sec_costs', [['electricityPerKwh'], ['laborPerHour'], ['setupMinutes']]],
+  ['sec_printer2', [['printer2.name', 'text'], ['printer2.priceUsd'], ['printer2.lifeHours'], ['printer2.powerKw'], ['printer2.maintenancePerHour']]],
+  ['sec_costs', [['electricityPerKwh'], ['laborPerHour'], ['setupMinutes'], ['fixedCostsMonthly'], ['itbmsRate', 'pct']]],
+  ['sec_packaging', [['packaging.basic.unit'], ['packaging.basic.order'], ['packaging.gift.unit'], ['packaging.gift.order']]],
+  ['sec_shipping', [['shipping.pickup'], ['shipping.city'], ['shipping.outer'], ['shipping.interior']]],
+  ['sec_payments', [['paymentFees.cash', 'pct'], ['paymentFees.yappy', 'pct'], ['paymentFees.transfer', 'pct'], ['paymentFees.card', 'pct']]],
   ['sec_pricing', [['monthlyProfitGoal'], ['sellableHoursPerMonth'], ['minOrderPrice'], ['minMargin', 'pct'], ['premiumMultiplier'], ['urgencyMultiplier'], ['roundingStep'], ['marketMaxPerGram']]],
   ['sec_complexity', [['marginByComplexity', 'pctlist'], ['failureRiskByComplexity', 'pctlist'], ['postMinutesByComplexity', 'list']]],
   ['sec_estimation', [['estimation.infill', 'pct'], ['estimation.massCalibration'], ['estimation.timeCalibration']]],
@@ -348,7 +389,7 @@ function renderAdmin() {
       html += '<div class="admin-grid">' + simple.map(([path, type]) => {
         const v = getPath(cfg, path);
         const shown = type === 'pct' ? +(v * 100).toFixed(2) : v;
-        return `<label><span>${t('f_' + path.replace('.', '_'))}</span><input data-path="${path}" data-type="${type || 'num'}" type="${type === 'text' ? 'text' : 'number'}" step="any" value="${esc(shown)}"></label>`;
+        return `<label><span>${t('f_' + path.replaceAll('.', '_'))}</span><input data-path="${path}" data-type="${type || 'num'}" type="${type === 'text' ? 'text' : 'number'}" step="any" value="${esc(shown)}"></label>`;
       }).join('') + '</div>';
     }
     for (const [path, type] of lists) {
@@ -358,6 +399,12 @@ function renderAdmin() {
     }
     if (sec === 'sec_printer') {
       html += `<p class="admin-info muted">${t('machineRate')}: <b>${money(machineRatePerHour(cfg))}${t('perHour')}</b></p>`;
+    }
+    if (sec === 'sec_printer2') {
+      html += `<p class="admin-info muted">${t('machineRate')}: <b>${money(machineRatePerHour(cfg, cfg.printer2))}${t('perHour')}</b></p>`;
+    }
+    if (sec === 'sec_costs') {
+      html += `<p class="admin-info muted">${t('overheadPerHour')}: <b>${money((cfg.fixedCostsMonthly || 0) / Math.max(1, cfg.sellableHoursPerMonth))}${t('perHour')}</b></p>`;
     }
     if (sec === 'sec_pricing') {
       html += `<p class="admin-info muted">${t('goalPerHour')}: <b>${money(cfg.monthlyProfitGoal / Math.max(1, cfg.sellableHoursPerMonth))}${t('perHour')}</b></p>`;
@@ -458,7 +505,25 @@ function setupAdmin() {
 }
 
 // ---------- inicio ----------
+function currentPrinter() { return selectPrinter(state.cfg, $('printer').value); }
+
+function fillPrinterAndShipping() {
+  const cfg = state.cfg;
+  const ps = $('printer');
+  const prevP = ps.value || 'printer';
+  const list = [['printer', cfg.printer]];
+  if (cfg.printer2?.enabled) list.push(['printer2', cfg.printer2]);
+  ps.innerHTML = list.map(([k, p]) => `<option value="${k}">${esc(p.name)}</option>`).join('');
+  ps.value = list.some(([k]) => k === prevP) ? prevP : 'printer';
+  $('printerField').hidden = list.length < 2;
+  const ss = $('shipping');
+  const prevS = ss.value || 'pickup';
+  ss.innerHTML = Object.entries(cfg.shipping || {}).map(([k, v]) => `<option value="${esc(k)}">${esc(t('shipping_' + k))} · ${money(v)}</option>`).join('');
+  ss.value = cfg.shipping?.[prevS] != null ? prevS : Object.keys(cfg.shipping || {})[0];
+}
+
 function fillMaterials() {
+  fillPrinterAndShipping();
   const sel = $('material');
   const prev = sel.value;
   sel.innerHTML = Object.keys(state.cfg.materials).map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
@@ -467,6 +532,7 @@ function fillMaterials() {
 
 function refreshLanguage() {
   applyI18n();
+  fillPrinterAndShipping();
   for (const b of document.querySelectorAll('[data-lang]')) b.classList.toggle('active', b.dataset.lang === getLang());
   if (state.admin && $('adminDialog').open) renderAdmin();
   recompute();
