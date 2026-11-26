@@ -258,10 +258,12 @@ textarea { min-height: 180px; font-family: ui-monospace, Menlo, Consolas, monosp
 
 /* hoja de cotización para imprimir */
 .print-sheet { display: none; }
+/* margen de página 0: el navegador no imprime el título de la pestaña ni la dirección del sitio */
+@page { margin: 0; }
 @media print {
   body { background: #fff; color: #000; }
   .topbar, .layout, .toast, dialog { display: none !important; }
-  .print-sheet { display: block; padding: 24px; font-size: 14px; }
+  .print-sheet { display: block; padding: 16mm 16mm 14mm; font-size: 14px; }
   .print-sheet h1 { font-size: 22px; margin-bottom: 4px; }
   .print-sheet table { width: 100%; border-collapse: collapse; margin-top: 16px; }
   .print-sheet td, .print-sheet th { border-bottom: 1px solid #ccc; padding: 8px 4px; text-align: left; }
