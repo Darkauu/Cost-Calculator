@@ -269,3 +269,18 @@ textarea { min-height: 180px; font-family: ui-monospace, Menlo, Consolas, monosp
   .print-sheet img { max-width: 260px; margin-top: 12px; border: 1px solid #ddd; }
 }
 .btn > span { display: inline; font-size: inherit; color: inherit; margin: 0; }
+
+/* ---------- modelos de la cotización ---------- */
+.models-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.models-head h2 { margin: 0; }
+.model-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.model-list li { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px 4px 0; min-width: 0; }
+.model-list li.active { border-color: var(--accent); background: var(--accent-soft); }
+.model-sel { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; background: none; border: 0; color: inherit; font: inherit; text-align: left; padding: 6px 10px; cursor: pointer; }
+.model-name { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-sub { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.model-list .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 1rem; padding: 4px 6px; }
+.model-list .del:hover { color: var(--bad); }
+#modelsHint { margin: 8px 0 0; }
+.breakdown h3 { font-size: .9rem; margin: 14px 0 6px; }
+.breakdown th { text-align: left; font-size: .8rem; color: var(--muted); font-weight: 600; }

@@ -15,6 +15,7 @@ Es una página estática: no tiene servidor ni instalación, y el archivo del cl
    - **Piezas en el archivo:** si la placa trae varias piezas iguales (ej. 12 llaveros), pon cuántas: el tiempo y los gramos se reparten entre ellas.
    - **Impresora:** P2S o H2C, cada una con su costo por hora.
    - **Packaging** (Sin · Básico · Regalo), **insumos por unidad** (marca cuántas argollas, imanes, tornillos… lleva cada pieza), **envío** (incluido en el precio o cobrado aparte), **método de pago** (la comisión de tarjeta se cubre subiendo el precio) y **ITBMS 7 %** (se suma al final y no cuenta como ganancia).
+   - **Varios modelos en una cotización:** en "Modelos de la cotización" usa **+ Agregar modelo** (o suelta varios archivos a la vez: cada uno crea su modelo). Cada modelo tiene su propio archivo o peso/tiempo a mano, material, cantidad, acabado, piezas en el archivo, insumos, impresora, calidad y complejidad; haz clic en un modelo para editarlo y en ✕ para quitarlo. La tarjeta **Pedido** (packaging, pago, envío, entrega e ITBMS) aplica a toda la cotización. Cada modelo muestra la parte del precio recomendado que le toca.
 3. Cotiza el precio **Recomendado**. Si el cliente negocia, escribe el precio en "Precio negociado" para ver el semáforo:
    - 🟢 margen saludable · 🟡 margen bajo · 🔴 requiere aprobación (por debajo del margen mínimo).
 4. **Desglose del precio:** debajo de los precios se ve en qué se va cada dólar (filamento, máquina, gastos fijos, riesgo, mano de obra, insumos, packaging, envío, comisión, ganancia e ITBMS) con barras y el margen. Se puede ver para el mínimo, el recomendado, el premium o el precio negociado.
@@ -43,6 +44,8 @@ Precio     = (neto + envío incluido) ÷ (1 − comisión de pago), redondeado h
 Cliente    = precio + ITBMS (si aplica) + envío cobrado aparte
 Margen     = (precio − comisión − envío incluido − costo) ÷ (precio − comisión − envío incluido)
 ```
+
+**Pedido con varios modelos:** cada modelo se calcula con la fórmula anterior pero sin envío, sin comisión, sin pedido mínimo y sin el costo por pedido del packaging. Para cada nivel (mínimo, recomendado, premium) se suman los netos de los modelos, se agrega una sola vez el packaging por pedido (con el margen mínimo) y luego se aplican el envío, la comisión, el pedido mínimo y el redondeo al total. El margen objetivo del pedido es el promedio de los modelos ponderado por costo. Con un solo modelo el precio es exactamente el de la fórmula de arriba.
 
 Así el **mínimo** sigue garantizando el margen mínimo aunque se cobre con tarjeta, se incluya el envío o se agregue packaging: la comisión y el envío no se comen la ganancia.
 
