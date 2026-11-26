@@ -111,10 +111,12 @@ export function estimatePrint(analysis, { material, quality, estimation }) {
   const layers = analysis.sizeMm[2] / quality.layerMm;
   const level = analysis.complexity.level;
   const printHours = grams / (quality.gramsPerHour * (material.speedFactor ?? 1));
-  const hours = (printHours + (layers * e.layerOverheadSec) / 3600 + e.warmupHours)
+  // hours: impresión por pieza; prepHours: calentado y calibración, una vez por impresión.
+  const hours = (printHours + (layers * e.layerOverheadSec) / 3600)
     * e.timeComplexityFactor[level - 1] * e.timeCalibration;
+  const prepHours = e.warmupHours * e.timeCalibration;
 
-  return { grams, supportGrams, hours, layers: Math.ceil(layers) };
+  return { grams, supportGrams, hours, prepHours, layers: Math.ceil(layers) };
 }
 
 export function fitsBed(sizeMm, bedMm) {

@@ -105,6 +105,7 @@ G28
   const r = parseGcode(g);
   close(r.grams, 37.21);
   close(r.hours, (2 * 3600 + 16 * 60 + 40) / 3600);
+  close(r.prepHours, (6 * 60 + 35) / 3600);   // total − tiempo del modelo
   assert.equal(r.filaments.length, 2);
   assert.equal(r.filaments[1].type, 'PETG');
 });
@@ -198,4 +199,5 @@ test('.gcode.3mf: slice_info para tiempo/peso y G-code de la placa para cambios 
   close(r.sliced.grams, 50.02);
   assert.equal(r.sliced.changes, 3);
   assert.ok(r.sliced.purgeGrams > 1);
+  close(r.sliced.prepHours, (12 * 60 + 34) / 3600);   // 1h25m4s − 1h12m30s
 });

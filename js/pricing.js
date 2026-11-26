@@ -37,21 +37,32 @@ export function marginStatus(margin, target, minMargin) {
 
 /**
  * @param {object} job
- *   grams, hours      — por unidad
+ *   grams, hours      — por pieza (las horas son SOLO de impresión, sin la preparación)
+ *   prepHours         — preparación de la impresora (calentado, nivelado, calibración):
+ *                       se cobra UNA vez por modelo, no por pieza → 5 min + 7 min × cantidad
  *   exact             — true si vienen de un archivo laminado (Bambu Studio)
  *   complexity        — 1..5
  *   material, quality, finish, urgent, quantity
  *   printer           — 'printer' | 'printer2'
  *   packaging         — clave de cfg.packaging (none, basic, gift)
- *   shipping          — clave de cfg.shipping; shippingMode: 'included' | 'separate'
+ *   supplies          — { id: cantidad por pieza } del catálogo de insumos; suppliesPerUnit: USD extra por pieza
+ *   shipping          — clave de cfg.shipping
  *   payment           — clave de cfg.paymentFees
  *   itbms             — true para sumar ITBMS al cobro
- *   suppliesPerUnit   — insumos extra por unidad (argollas, imanes…), USD
  * @param {object} cfg  configuración (ver config.js)
  *
- * Los tres precios (mínimo, recomendado, premium) son SIN ITBMS. Ya incluyen la entrega
- * cuando se cobra dentro del precio y la comisión del método de pago, de modo que el
- * margen que se muestra es lo que queda después de pagar ambas.
+ * El precio se arma así (para cada nivel: mínimo, recomendado, premium):
+ *   pieza        = (material + máquina + gastos fijos + postproceso + acabado + riesgo) + ganancia
+ *                  → el precio por pieza (y por gramo) NO cambia con la cantidad; solo baja
+ *                    con el descuento por cantidad
+ *   preparación  = (preparación de la impresora + preparación del pedido) + ganancia, una vez
+ *   producto     = preparación + pieza × cantidad × (1 − descuento)
+ *                  (nunca por debajo del margen mínimo ni del pedido mínimo)
+ *   empaquetado  = insumos + packaging, al costo ("Gastos adicionales de empaquetado")
+ *   envío        = costo del envío, al costo ("Gastos adicionales de envío")
+ *   precio       = (producto + empaquetado + envío) ÷ (1 − comisión del método de pago)
+ * Los precios son SIN ITBMS. El margen se mide sobre el producto: lo que queda después de la
+ * comisión y de los gastos adicionales.
  */
 export function computeQuote(job, cfg) {
   const qty = Math.max(1, Math.floor(job.quantity || 1));
@@ -67,19 +78,39 @@ export function computeQuote(job, cfg) {
   const timeFactor = job.exact ? 1 : finish.timeFactor;
   const gramsUnit = job.grams * matFactor;
   const hoursUnit = job.hours * timeFactor;
+  const prepHours = Math.max(0, job.prepHours || 0);
   const totalGrams = gramsUnit * qty;
-  const totalHours = hoursUnit * qty;
+  const totalHours = prepHours + hoursUnit * qty;
 
   const hoursBase = Math.max(1, cfg.sellableHoursPerMonth);
-  const materialCost = totalGrams * (material.costPerKg / 1000) * (1 + cfg.wasteFactor);
   const rate = machineRatePerHour(cfg, printer);
-  const machineCost = totalHours * rate;
   const overheadRate = (cfg.fixedCostsMonthly || 0) / hoursBase;
-  const overheadCost = totalHours * overheadRate;
-  const laborMinutes = cfg.setupMinutes + (cfg.postMinutesByComplexity[idx] + finish.extraMinutes) * qty;
-  const laborCost = (laborMinutes / 60) * cfg.laborPerHour;
-  const extrasCost = finish.extraCost * qty;
-  // Insumos: los del catálogo (cantidad por unidad) más un monto libre por unidad.
+  const goalRate = cfg.monthlyProfitGoal / hoursBase;
+  const targetMargin = cfg.marginByComplexity[idx];
+
+  // Por pieza
+  const u = {
+    material: gramsUnit * (material.costPerKg / 1000) * (1 + cfg.wasteFactor),
+    machine: hoursUnit * rate,
+    overhead: hoursUnit * overheadRate,
+    labor: ((cfg.postMinutesByComplexity[idx] + finish.extraMinutes) / 60) * cfg.laborPerHour,
+    extras: finish.extraCost,
+  };
+  u.risk = (u.material + u.machine) * cfg.failureRiskByComplexity[idx];
+  const unitCost = u.material + u.machine + u.overhead + u.labor + u.extras + u.risk;
+  // Una vez por modelo: preparación de la impresora (tiempo de máquina) y del pedido (mano de obra)
+  const p = { machine: prepHours * rate, overhead: prepHours * overheadRate, labor: (cfg.setupMinutes / 60) * cfg.laborPerHour };
+  const prepCost = p.machine + p.overhead + p.labor;
+  const cost = unitCost * qty + prepCost;
+
+  // Ganancia: lo mayor entre el margen objetivo y lo que la meta mensual exige por hora de máquina.
+  const withProfit = (c, h) => Math.max(c / (1 - targetMargin), c + h * goalRate);
+  const unitRec = withProfit(unitCost, hoursUnit);
+  const prepRec = withProfit(prepCost, prepHours);
+  const discountPct = quantityDiscount(qty, cfg.quantityDiscounts);
+  const piecesRec = unitRec * qty * (1 - discountPct);
+
+  // Gastos adicionales (al costo): empaquetado (insumos + packaging) y envío
   let suppliesUnit = Math.max(0, job.suppliesPerUnit || 0);
   for (const [id, n] of Object.entries(job.supplies || {})) {
     const s = (cfg.supplies || {})[id];
@@ -87,109 +118,122 @@ export function computeQuote(job, cfg) {
   }
   const suppliesCost = suppliesUnit * qty;
   const pack = (cfg.packaging || {})[job.packaging] || { unit: 0, order: 0 };
-  // En un pedido con varios modelos, el costo por pedido del packaging se cobra una sola vez
-  // (lo suma computeOrder), por eso cada modelo puede omitirlo.
+  // En un pedido con varios modelos, el costo por pedido del packaging lo suma computeOrder una sola vez.
   const packagingCost = pack.unit * qty + (job.skipOrderCosts ? 0 : pack.order);
-  const riskCost = (materialCost + machineCost) * cfg.failureRiskByComplexity[idx];
-  // Costo de producir y empacar el pedido (sin entrega ni comisión).
-  const cost = materialCost + machineCost + overheadCost + laborCost + extrasCost + suppliesCost + packagingCost + riskCost;
-
   const shipEntry = (cfg.shipping || {})[job.shipping];
   const shipAmount = Math.max(0, (typeof shipEntry === 'number' ? shipEntry : shipEntry?.cost) || 0);
-  const shipIncluded = job.shippingMode === 'separate' ? 0 : shipAmount;
-  const shipSeparate = job.shippingMode === 'separate' ? shipAmount : 0;
+  const extras = { packaging: suppliesCost + packagingCost, shipping: shipAmount };
   const feeEntry = (cfg.paymentFees || {})[job.payment];
   const fee = Math.min(0.5, Math.max(0, (typeof feeEntry === 'number' ? feeEntry : feeEntry?.pct) || 0));
-
-  // Ganancia: lo mayor entre el margen objetivo y lo que la meta mensual exige por hora de máquina.
-  const targetMargin = cfg.marginByComplexity[idx];
-  const profitByMargin = cost * targetMargin / (1 - targetMargin);
-  const profitPerHour = cfg.monthlyProfitGoal / hoursBase;
-  const profitByGoal = totalHours * profitPerHour;
-  const profit = Math.max(profitByMargin, profitByGoal);
-
-  const discountPct = quantityDiscount(qty, cfg.quantityDiscounts);
-  const floorNet = cost / (1 - cfg.minMargin);
-  const urgency = job.urgent ? cfg.urgencyMultiplier : 1;
-  const step = cfg.roundingStep;
-  // Neto (lo que queda para el producto) → precio de venta: suma la entrega incluida y
-  // sube el precio para cubrir la comisión del cobro.
-  const gross = (net) => (net + shipIncluded) / (1 - fee);
-
-  const recNet = Math.max((cost + profit) * (1 - discountPct), floorNet, cfg.minOrderPrice) * urgency;
-  const minNet = Math.max(floorNet, cfg.minOrderPrice) * urgency;
-  const recommended = roundUp(gross(recNet), step);
-  let minimum = roundUp(gross(minNet), step);
-  if (minimum > recommended) minimum = recommended;
-  const premium = roundUp(gross(recNet * cfg.premiumMultiplier), step);
-
-  // Margen sobre lo que queda del producto: precio − comisión − entrega incluida.
-  const netOf = (price) => price * (1 - fee) - shipIncluded;
-  const marginOf = (price) => { const n = netOf(price); return n > 0 ? (n - cost) / n : -1; };
   const taxRate = job.itbms ? (cfg.itbmsRate || 0) : 0;
-  const tier = (price) => {
-    const tax = price * taxRate;
-    return {
-      price,
-      unit: price / qty,
-      margin: marginOf(price),
-      profit: netOf(price) - cost,
-      fee: price * fee,
-      tax,
-      clientTotal: price + tax + shipSeparate,
-      status: marginStatus(marginOf(price), targetMargin, cfg.minMargin),
-    };
-  };
 
+  const urgency = job.urgent ? cfg.urgencyMultiplier : 1;
+  const floorNet = cost / (1 - cfg.minMargin);
+  const productNet = {
+    recommended: Math.max(prepRec + piecesRec, floorNet, cfg.minOrderPrice) * urgency,
+    minimum: Math.max(floorNet, cfg.minOrderPrice) * urgency,
+  };
+  productNet.premium = productNet.recommended * cfg.premiumMultiplier;
+
+  // Reparto del producto entre preparación y piezas (proporcional a su precio recomendado)
+  const part = { pieces: piecesRec * urgency, nominal: (prepRec + piecesRec) * urgency, quantity: qty };
+  const quote = finishQuote({
+    cfg, fee, taxRate, cost, extras, productNet, targetMargin, quantity: qty,
+    parts: [part],
+    costs: {
+      material: u.material * qty, machine: u.machine * qty + p.machine, overhead: u.overhead * qty + p.overhead,
+      risk: u.risk * qty, labor: u.labor * qty + p.labor, extras: u.extras * qty,
+    },
+  });
+
+  // Alerta de mercado: solo el precio de las piezas por gramo (sin preparación ni gastos adicionales).
   const warnings = [];
-  const productPrice = netOf(recommended);
-  if (totalGrams >= cfg.marketCheckMinGrams && productPrice / totalGrams > cfg.marketMaxPerGram) {
-    warnings.push({ code: 'aboveMarket', perGram: productPrice / totalGrams });
+  const piecesPerGram = quote.lines(quote.tiers.recommended.price).items[0].pieces / totalGrams;
+  if (totalGrams >= cfg.marketCheckMinGrams && piecesPerGram > cfg.marketMaxPerGram) {
+    warnings.push({ code: 'aboveMarket', perGram: piecesPerGram });
   }
 
   return {
-    quantity: qty,
+    ...quote,
     complexity: level,
     printer: printer.name,
     grams: { unit: gramsUnit, total: totalGrams },
-    hours: { unit: hoursUnit, total: totalHours },
+    hours: { unit: hoursUnit, prep: prepHours, total: totalHours },
     breakdown: {
-      material: materialCost,
-      machine: machineCost,
-      overhead: overheadCost,
-      labor: laborCost,
-      extras: extrasCost,
+      ...quote.breakdown,
       supplies: suppliesCost,
       packaging: packagingCost,
-      risk: riskCost,
       machineRate: rate,
       overheadRate,
-      laborMinutes,
+      laborMinutes: cfg.setupMinutes + (cfg.postMinutesByComplexity[idx] + finish.extraMinutes) * qty,
     },
+    unitCost,
+    prepCost,
+    part,
+    profitDriver: hoursUnit * goalRate > unitCost * targetMargin / (1 - targetMargin) ? 'goal' : 'margin',
+    discountPct,
+    urgent: !!job.urgent,
+    warnings,
+  };
+}
+
+// Parte común de una cotización simple y de un pedido: precios, margen, reparto en líneas
+// para el cliente y desglose con barras.
+function finishQuote({ cfg, fee, taxRate, cost, extras, productNet, targetMargin, quantity, parts, costs }) {
+  const step = cfg.roundingStep;
+  const extrasTotal = extras.packaging + extras.shipping;
+  const gross = (net) => (net + extrasTotal) / (1 - fee);
+  const recommended = roundUp(gross(productNet.recommended), step);
+  const minimum = Math.min(recommended, roundUp(gross(productNet.minimum), step));
+  const premium = Math.max(recommended, roundUp(gross(productNet.premium), step));
+
+  const netOf = (price) => price * (1 - fee) - extrasTotal;
+  const marginOf = (price) => { const n = netOf(price); return n > 0 ? (n - cost) / n : -1; };
+  const tier = (price) => {
+    const tax = price * taxRate;
+    return {
+      price, unit: price / quantity, margin: marginOf(price), profit: netOf(price) - cost,
+      fee: price * fee, tax, clientTotal: price + tax,
+      status: marginStatus(marginOf(price), targetMargin, cfg.minMargin),
+    };
+  };
+  const nominal = parts.reduce((a, x) => a + x.nominal, 0) || 1;
+  return {
+    quantity,
     cost,
-    shipping: { amount: shipAmount, included: shipIncluded, separate: shipSeparate },
+    extras,
+    shipping: { amount: extras.shipping },
     feePct: fee,
     taxRate,
     targetMargin,
-    profitDriver: profitByGoal > profitByMargin ? 'goal' : 'margin',
-    discountPct,
-    urgent: !!job.urgent,
-    tiers: {
-      minimum: tier(minimum),
-      recommended: tier(recommended),
-      premium: tier(premium),
-    },
+    productNet,
+    breakdown: { ...costs },
+    tiers: { minimum: tier(minimum), recommended: tier(recommended), premium: tier(premium) },
     goalShare: (netOf(recommended) - cost) / cfg.monthlyProfitGoal,
-    warnings,
     evaluate(price) { return tier(price); },
+    // Líneas de la cotización para el cliente: por modelo, preparación y piezas (con precio por
+    // pieza); luego gastos adicionales de empaquetado y de envío, y la comisión del método de pago.
+    // Las líneas suman exactamente el precio. El precio por pieza se mantiene fijo: lo que suben
+    // el redondeo o el pedido mínimo va a la preparación; un precio menor baja todo en proporción.
+    lines(price) {
+      const product = netOf(price);
+      const ratio = Math.min(1, Math.max(0, product) / nominal);
+      const excess = product - nominal * ratio;
+      const items = parts.map((x) => {
+        const pieces = x.pieces * ratio;
+        const total = x.nominal * ratio + excess * x.nominal / nominal;
+        return { prep: total - pieces, pieces, unit: pieces / x.quantity, total, quantity: x.quantity };
+      });
+      return { items, product, packaging: extras.packaging, shipping: extras.shipping, fee: price * fee };
+    },
     // Reparto de un precio en partes (para el desglose con barras). La suma de las partes es
     // el precio + ITBMS; si el precio no cubre el costo, la ganancia sale negativa.
     split(price) {
       const tr = tier(price);
       return [
-        ['material', materialCost], ['machine', machineCost], ['overhead', overheadCost],
-        ['risk', riskCost], ['labor', laborCost], ['supplies', extrasCost + suppliesCost],
-        ['packaging', packagingCost], ['shipping', shipIncluded], ['fee', tr.fee],
+        ['material', costs.material], ['machine', costs.machine], ['overhead', costs.overhead],
+        ['risk', costs.risk], ['labor', costs.labor], ['supplies', costs.extras],
+        ['packaging', extras.packaging], ['shipping', extras.shipping], ['fee', tr.fee],
         ['profit', tr.profit], ['tax', tr.tax],
       ];
     },
@@ -198,102 +242,60 @@ export function computeQuote(job, cfg) {
 
 /**
  * Cotización de un pedido con varios modelos. Cada modelo tiene sus propios parámetros
- * (material, cantidad, acabado, complejidad, impresora, insumos…); el envío, el método de
- * pago, el ITBMS, el packaging y la urgencia son del pedido completo.
+ * (material, cantidad, acabado, complejidad, impresora, preparación, insumos…); el envío, el
+ * método de pago, el ITBMS, el packaging y la urgencia son del pedido completo.
  *
- * Cada modelo se cotiza sin envío, sin comisión, sin pedido mínimo y sin el costo por pedido
- * del packaging. Luego, por nivel (mínimo, recomendado, premium):
- *   neto   = Σ precio del modelo + packaging por pedido ÷ (1 − margen mínimo)
- *            (el mínimo nunca baja del pedido mínimo)
- *   precio = (neto + envío incluido) ÷ (1 − comisión), redondeado hacia arriba
- * El margen objetivo del pedido es el promedio de los modelos ponderado por costo.
+ * Cada modelo se cotiza sin envío, sin comisión y sin pedido mínimo; el packaging por pedido
+ * se cobra una sola vez. Por nivel: producto = Σ producto de cada modelo (el mínimo nunca baja
+ * del pedido mínimo); precio = (producto + empaquetado + envío) ÷ (1 − comisión).
  *
  * @param {object[]} jobs   un job por modelo (mismo formato que computeQuote)
- * @param {object}   order  packaging, shipping, shippingMode, payment, itbms, urgent
+ * @param {object}   order  packaging, shipping, payment, itbms, urgent
  */
 export function computeOrder(jobs, order, cfg) {
   if (!jobs.length) throw new Error('El pedido no tiene modelos');
-  // Un solo modelo: el precio es exactamente el de computeQuote (sin redondeos dobles).
+  // Un solo modelo: el precio es exactamente el de computeQuote.
   if (jobs.length === 1) {
     const q = computeQuote({ ...jobs[0], ...order }, cfg);
     return { ...q, items: [q], warnings: q.warnings.map((w) => ({ ...w, item: 0 })) };
   }
-  const itemCfg = { ...cfg, minOrderPrice: 0 };
   const quotes = jobs.map((j) => computeQuote({
-    ...j,
-    packaging: order.packaging, urgent: !!order.urgent, skipOrderCosts: true,
-    shipping: null, shippingMode: 'included', payment: null, itbms: false,
-  }, itemCfg));
-
-  const pack = (cfg.packaging || {})[order.packaging] || { unit: 0, order: 0 };
-  const packOrder = jobs.length ? pack.order : 0;
-  const shipEntry = (cfg.shipping || {})[order.shipping];
-  const shipAmount = Math.max(0, (typeof shipEntry === 'number' ? shipEntry : shipEntry?.cost) || 0);
-  const shipIncluded = order.shippingMode === 'separate' ? 0 : shipAmount;
-  const shipSeparate = order.shippingMode === 'separate' ? shipAmount : 0;
-  const feeEntry = (cfg.paymentFees || {})[order.payment];
-  const fee = Math.min(0.5, Math.max(0, (typeof feeEntry === 'number' ? feeEntry : feeEntry?.pct) || 0));
-  const taxRate = order.itbms ? (cfg.itbmsRate || 0) : 0;
-  const step = cfg.roundingStep;
-  const urgency = order.urgent ? cfg.urgencyMultiplier : 1;
+    ...j, packaging: order.packaging, urgent: !!order.urgent, skipOrderCosts: true,
+    shipping: null, payment: null, itbms: false,
+  }, { ...cfg, minOrderPrice: 0 }));
 
   const sum = (f) => quotes.reduce((a, q) => a + f(q), 0);
-  const cost = sum((q) => q.cost) + packOrder;
-  const targetMargin = sum((q) => q.cost) > 0 ? sum((q) => q.cost * q.targetMargin) / sum((q) => q.cost) : quotes[0].targetMargin;
-  const packNet = packOrder / (1 - cfg.minMargin);
+  const pack = (cfg.packaging || {})[order.packaging] || { unit: 0, order: 0 };
+  const shipEntry = (cfg.shipping || {})[order.shipping];
+  const shipAmount = Math.max(0, (typeof shipEntry === 'number' ? shipEntry : shipEntry?.cost) || 0);
+  const feeEntry = (cfg.paymentFees || {})[order.payment];
+  const fee = Math.min(0.5, Math.max(0, (typeof feeEntry === 'number' ? feeEntry : feeEntry?.pct) || 0));
+  const urgency = order.urgent ? cfg.urgencyMultiplier : 1;
   const minOrderNet = cfg.minOrderPrice * urgency;
-  const gross = (net) => (net + shipIncluded) / (1 - fee);
+  const productNet = {};
+  for (const k of ['minimum', 'recommended', 'premium']) productNet[k] = Math.max(sum((q) => q.productNet[k]), minOrderNet);
 
-  const net = (key) => sum((q) => q.tiers[key].price) + packNet;
-  const recommended = roundUp(gross(Math.max(net('recommended'), minOrderNet)), step);
-  let minimum = roundUp(gross(Math.max(net('minimum'), minOrderNet)), step);
-  if (minimum > recommended) minimum = recommended;
-  const premium = Math.max(recommended, roundUp(gross(Math.max(net('premium'), minOrderNet)), step));
-
-  const netOf = (price) => price * (1 - fee) - shipIncluded;
-  const marginOf = (price) => { const n = netOf(price); return n > 0 ? (n - cost) / n : -1; };
-  const units = sum((q) => q.quantity);
-  const tier = (price) => {
-    const tax = price * taxRate;
-    return {
-      price, unit: price / units, margin: marginOf(price), profit: netOf(price) - cost,
-      fee: price * fee, tax, clientTotal: price + tax + shipSeparate,
-      status: marginStatus(marginOf(price), targetMargin, cfg.minMargin),
-    };
-  };
-
+  const cost = sum((q) => q.cost);
   const bsum = (k) => sum((q) => q.breakdown[k]);
-  const breakdown = {
-    material: bsum('material'), machine: bsum('machine'), overhead: bsum('overhead'), labor: bsum('labor'),
-    extras: bsum('extras'), supplies: bsum('supplies'), packaging: bsum('packaging') + packOrder, risk: bsum('risk'),
-    laborMinutes: bsum('laborMinutes'),
-  };
-
-  const warnings = quotes.flatMap((q, i) => q.warnings.map((w) => ({ ...w, item: i })));
-  return {
-    items: quotes,
-    quantity: units,
-    grams: { total: sum((q) => q.grams.total) },
-    hours: { total: sum((q) => q.hours.total) },
-    breakdown,
-    cost,
-    shipping: { amount: shipAmount, included: shipIncluded, separate: shipSeparate },
-    feePct: fee,
-    taxRate,
-    targetMargin,
-    urgent: !!order.urgent,
-    tiers: { minimum: tier(minimum), recommended: tier(recommended), premium: tier(premium) },
-    goalShare: (netOf(recommended) - cost) / cfg.monthlyProfitGoal,
-    warnings,
-    evaluate(price) { return tier(price); },
-    split(price) {
-      const tr = tier(price);
-      return [
-        ['material', breakdown.material], ['machine', breakdown.machine], ['overhead', breakdown.overhead],
-        ['risk', breakdown.risk], ['labor', breakdown.labor], ['supplies', breakdown.extras + breakdown.supplies],
-        ['packaging', breakdown.packaging], ['shipping', shipIncluded], ['fee', tr.fee],
-        ['profit', tr.profit], ['tax', tr.tax],
-      ];
+  const quote = finishQuote({
+    cfg, fee, taxRate: order.itbms ? (cfg.itbmsRate || 0) : 0, cost,
+    extras: { packaging: sum((q) => q.extras.packaging) + pack.order, shipping: shipAmount },
+    productNet,
+    targetMargin: cost > 0 ? sum((q) => q.cost * q.targetMargin) / cost : quotes[0].targetMargin,
+    quantity: sum((q) => q.quantity),
+    parts: quotes.map((q) => q.part),
+    costs: {
+      material: bsum('material'), machine: bsum('machine'), overhead: bsum('overhead'),
+      risk: bsum('risk'), labor: bsum('labor'), extras: bsum('extras'),
     },
+  });
+  return {
+    ...quote,
+    items: quotes,
+    grams: { total: sum((q) => q.grams.total) },
+    hours: { total: sum((q) => q.hours.total), prep: sum((q) => q.hours.prep) },
+    breakdown: { ...quote.breakdown, supplies: bsum('supplies'), packaging: bsum('packaging') + pack.order, laborMinutes: bsum('laborMinutes') },
+    urgent: !!order.urgent,
+    warnings: quotes.flatMap((q, i) => q.warnings.map((w) => ({ ...w, item: i }))),
   };
 }

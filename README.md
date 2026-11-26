@@ -14,7 +14,7 @@ Es una página estática: no tiene servidor ni instalación, y el archivo del cl
 2. Elige material, cantidad, acabado (Ninguno · Lijado · Pintado · Multicolor) y entrega (Normal · Urgente). Impresora, calidad, complejidad y "otro insumo" están en **Opciones avanzadas**.
    - **Piezas en el archivo:** si la placa trae varias piezas iguales (ej. 12 llaveros), pon cuántas: el tiempo y los gramos se reparten entre ellas.
    - **Impresora:** P2S o H2C, cada una con su costo por hora.
-   - **Packaging** (Sin · Básico · Regalo), **insumos por unidad** (marca cuántas argollas, imanes, tornillos… lleva cada pieza), **envío** (incluido en el precio o cobrado aparte), **método de pago** (la comisión de tarjeta se cubre subiendo el precio) y **ITBMS 7 %** (se suma al final y no cuenta como ganancia).
+   - **Packaging** (Sin · Básico · Regalo), **insumos por unidad** (marca cuántas argollas, imanes, tornillos… lleva cada pieza), **envío** (sale como "Gastos adicionales de envío"), **método de pago** (la comisión de tarjeta se cubre subiendo el precio) y **ITBMS 7 %** (se suma al final y no cuenta como ganancia).
    - **Varios modelos en una cotización:** en "Modelos de la cotización" usa **+ Agregar modelo** (o suelta varios archivos a la vez: cada uno crea su modelo). Cada modelo tiene su propio archivo o peso/tiempo a mano, material, cantidad, acabado, piezas en el archivo, insumos, impresora, calidad y complejidad; haz clic en un modelo para editarlo y en ✕ para quitarlo. La tarjeta **Pedido** (packaging, pago, envío, entrega e ITBMS) aplica a toda la cotización. Cada modelo muestra la parte del precio recomendado que le toca.
 3. Cotiza el precio **Recomendado**. Si el cliente negocia, escribe el precio en "Precio negociado" para ver el semáforo:
    - 🟢 margen saludable · 🟡 margen bajo · 🔴 requiere aprobación (por debajo del margen mínimo).
@@ -27,26 +27,25 @@ En el visor 3D, las caras en naranja necesitan soporte.
 ## Cómo se calcula el precio
 
 ```
-Material   = gramos × costo/kg × (1 + 5 % de desperdicio)
-Máquina    = horas × (precio impresora ÷ vida útil + kW × USD/kWh + mantenimiento)   ← según P2S o H2C
-Gastos fijos = horas × (gastos fijos del mes ÷ horas vendibles al mes)
-Mano obra  = (preparación por pedido + postproceso por unidad según complejidad + acabado) × USD/h
-Insumos    = acabado + Σ (insumo del catálogo × cantidad por unidad) + otro insumo por unidad
-Packaging  = costo por unidad × cantidad + costo por pedido
-Riesgo     = (material + máquina) × % de falla según complejidad
-Costo      = suma de todo lo anterior
-
-Ganancia   = la MAYOR entre:
-             · margen objetivo según complejidad (55 % → 72 %)
-             · horas de máquina × (meta mensual ÷ horas vendibles al mes)
-Neto       = costo + ganancia − descuento por cantidad
-             nunca por debajo del margen mínimo (35 %) ni del pedido mínimo ($5)
-Precio     = (neto + envío incluido) ÷ (1 − comisión de pago), redondeado hacia arriba a $0.50
-Cliente    = precio + ITBMS (si aplica) + envío cobrado aparte
-Margen     = (precio − comisión − envío incluido − costo) ÷ (precio − comisión − envío incluido)
+Por pieza   = material + máquina + gastos fijos + postproceso + acabado + riesgo   (tiempo de impresión de UNA pieza)
+              + ganancia (la MAYOR entre el margen objetivo por complejidad y la meta mensual por hora)
+              → el precio por pieza (y por gramo) es el mismo para 1 o 9 piezas; solo baja con
+                el descuento por cantidad (10+ → 5 %, 25+ → 10 %, 50+ → 15 %)
+Preparación = (tiempo de preparación de la impresora + preparación del pedido) + ganancia, UNA vez
+              → tiempo de máquina = preparación + impresión por pieza × cantidad   (5 min + 7 min × 20)
+Producto    = preparación + pieza × cantidad × (1 − descuento)
+              nunca por debajo del margen mínimo (35 %) ni del pedido mínimo ($5);
+              si el mínimo o el redondeo suben el precio, la diferencia va a la preparación
+Empaquetado = insumos (consumibles) + packaging, al costo   → "Gastos adicionales de empaquetado"
+Envío       = costo del envío, al costo                      → "Gastos adicionales de envío"
+Precio      = (producto + empaquetado + envío) ÷ (1 − comisión del método de pago), redondeado a $0.50
+Cliente     = precio + ITBMS (si aplica)
+Margen      = (precio − comisión − empaquetado − envío − costo) ÷ (precio − comisión − empaquetado − envío)
 ```
 
-**Pedido con varios modelos:** cada modelo se calcula con la fórmula anterior pero sin envío, sin comisión, sin pedido mínimo y sin el costo por pedido del packaging. Para cada nivel (mínimo, recomendado, premium) se suman los netos de los modelos, se agrega una sola vez el packaging por pedido (con el margen mínimo) y luego se aplican el envío, la comisión, el pedido mínimo y el redondeo al total. El margen objetivo del pedido es el promedio de los modelos ponderado por costo. Con un solo modelo el precio es exactamente el de la fórmula de arriba.
+- **Tiempo de preparación:** de un archivo de Bambu Studio se calcula como *total estimado − tiempo del modelo* (calentado, nivelado, calibración). En un STL se usa el calentado de la estimación (6 min). A mano se escribe en sus propias casillas h · m · s.
+- **Alerta de precio por gramo:** compara solo el precio de las piezas (sin preparación, insumos, packaging ni envío) contra la referencia de mercado.
+- **La cotización para el cliente** (copiar o PDF) lista las piezas con precio por pieza, la preparación, los gastos adicionales de empaquetado y de envío, el subtotal y el total con **cada método de pago** (los que no cobran comisión van juntos).
 
 Así el **mínimo** sigue garantizando el margen mínimo aunque se cobre con tarjeta, se incluya el envío o se agregue packaging: la comisión y el envío no se comen la ganancia.
 

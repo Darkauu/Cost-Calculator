@@ -125,6 +125,7 @@ h2 { font-size: 1rem; margin: 0 0 .75rem; }
 .hms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .hms label { display: flex; align-items: center; gap: 4px; }
 .hms label > span { margin: 0; font-size: .85rem; }
+@media (min-width: 521px) { .manual-grid fieldset:last-child { grid-column: 2; } }
 @media (max-width: 520px) { .manual-grid { grid-template-columns: 1fr; } }
 
 /* insumos y opciones avanzadas */
@@ -153,6 +154,8 @@ h2 { font-size: 1rem; margin: 0 0 .75rem; }
 .split-table tr.tax .bar i { background: var(--muted); }
 .split-table tr.total td { border-top: 1px solid var(--border); font-weight: 700; padding-top: 6px; }
 .split-table tr.total td:last-child { text-align: right; padding-left: 10px; }
+.split-table tr.total .pill { white-space: normal; text-align: center; }
+@media (max-width: 420px) { .split-table .bar { width: 26%; } .split-table .amt { width: 70px; } }
 
 /* listas editables del admin */
 .admin-list { width: 100%; border-collapse: collapse; font-size: .85rem; }
@@ -265,6 +268,8 @@ textarea { min-height: 180px; font-family: ui-monospace, Menlo, Consolas, monosp
   .topbar, .layout, .toast, dialog { display: none !important; }
   .print-sheet { display: block; padding: 16mm 16mm 14mm; font-size: 14px; }
   .print-sheet h1 { font-size: 22px; margin-bottom: 4px; }
+  .print-sheet .pay-title { font-size: 16px; margin: 20px 0 0; }
+  .print-sheet .small { font-size: 11px; color: #555; }
   .print-sheet table { width: 100%; border-collapse: collapse; margin-top: 16px; }
   .print-sheet td, .print-sheet th { border-bottom: 1px solid #ccc; padding: 8px 4px; text-align: left; }
   .print-sheet .num { text-align: right; }

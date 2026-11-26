@@ -50,7 +50,8 @@ test('estimación de peso y tiempo para un cubo de 20 mm en PLA', () => {
   });
   // cáscara 2400×0.9 = 2160 mm³ + relleno (8000−2160)×0.15 = 876 → 3.036 cm³ × 1.24 ≈ 3.76 g
   close(e.grams, 3.765, 0.01);
-  assert.ok(e.hours > 0.1 && e.hours < 0.5, `horas ${e.hours}`);
+  assert.ok(e.hours > 0.05 && e.hours < 0.5, `horas ${e.hours}`);
+  close(e.prepHours, DEFAULT_CONFIG.estimation.warmupHours);
   assert.equal(e.layers, 100);
 });
 
