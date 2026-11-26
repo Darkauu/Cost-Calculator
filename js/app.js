@@ -1,20 +1,24 @@
 import { loadConfig, saveLocalConfig, clearLocalConfig, mergeConfig, DEFAULT_CONFIG } from './config.js';
 import { t, getLang, setLang, applyI18n } from './i18n.js';
 import { analyzeMesh, estimatePrint, fitsBed } from './geometry.js';
-import { computeQuote, machineRatePerHour, selectPrinter, hmsToHours } from './pricing.js';
+import { computeOrder, machineRatePerHour, selectPrinter, hmsToHours } from './pricing.js';
 import { parseFile } from './parsers.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
   cfg: null,
-  fileName: null,
-  positions: null,
-  sliced: null,
-  analysis: null,
-  quote: null,
+  items: [],     // modelos del pedido, cada uno con su archivo y sus parámetros
+  active: 0,     // modelo que se está editando
+  entries: [],   // modelos con datos suficientes para cotizar: { item, i, job }
+  quote: null,   // cotización del pedido completo
   admin: false,
   viewer: null,
 };
+const cur = () => state.items[state.active];
+// Atajos al modelo activo, para que el análisis y el visor lean siempre el modelo elegido.
+for (const k of ['fileName', 'positions', 'sliced', 'analysis', 'notices']) {
+  Object.defineProperty(state, k, { get: () => cur()?.[k], set: (v) => { cur()[k] = v; } });
+}
 
 // ---------- formato ----------
 // es-US / en-US: "$1,234.50" en ambos idiomas, sin ambigüedad con pesos.
@@ -39,79 +43,182 @@ function toast(msg) {
 }
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
-// ---------- lectura de opciones ----------
-function options() {
+// ---------- modelos del pedido ----------
+let nextId = 1;
+function newItem(from) {
+  const mats = Object.keys(state.cfg.materials);
+  return {
+    id: nextId++, fileName: null, positions: null, sliced: null, analysis: null, notices: [],
+    form: {
+      material: from?.form.material || mats[0], quantity: 1, finish: 'none', perFile: 1,
+      printer: from?.form.printer || 'printer', complexity: 'auto', quality: 'standard',
+      suppliesOther: 0, supplies: {}, manualOpen: false, grams: 0, h: 0, m: 0, s: 0,
+    },
+  };
+}
+const itemName = (it, i) => it.fileName || t('modelN', { n: i + 1 });
+
+// Parámetros del modelo activo: se guardan en item.form al editar y se cargan al cambiar de modelo.
+function readForm() {
+  const n = (id) => Math.max(0, parseFloat($(id).value) || 0);
   return {
     material: $('material').value,
-    quality: document.querySelector('input[name=quality]:checked').value,
     quantity: Math.max(1, parseInt($('quantity').value, 10) || 1),
     finish: $('finish').value,
-    urgent: document.querySelector('input[name=urgency]:checked').value === 'urgent',
-    complexity: $('complexity').value,
+    perFile: Math.max(1, parseInt($('perFile').value, 10) || 1),
     printer: $('printer').value || 'printer',
+    complexity: $('complexity').value,
+    quality: document.querySelector('input[name=quality]:checked')?.value || 'standard',
+    suppliesOther: n('supplies'),
+    supplies: Object.fromEntries([...document.querySelectorAll('#suppliesList input[data-supply]')]
+      .map((el) => [el.dataset.supply, Math.max(0, parseFloat(el.value) || 0)]).filter(([, v]) => v > 0)),
+    manualOpen: $('manual').open,
+    grams: n('manualGrams'), h: n('manualH'), m: n('manualM'), s: n('manualS'),
+  };
+}
+function saveForm() { const it = cur(); if (it) it.form = readForm(); }
+function loadForm(it) {
+  const f = it.form;
+  const mats = Object.keys(state.cfg.materials);
+  $('material').value = state.cfg.materials[f.material] ? f.material : mats[0];
+  $('quantity').value = f.quantity;
+  $('finish').value = f.finish;
+  $('perFile').value = f.perFile;
+  $('printer').value = f.printer;
+  if (!$('printer').value) $('printer').value = 'printer';
+  $('complexity').value = f.complexity;
+  for (const r of document.querySelectorAll('input[name=quality]')) r.checked = r.value === f.quality;
+  $('supplies').value = f.suppliesOther;
+  for (const el of document.querySelectorAll('#suppliesList input[data-supply]')) el.value = f.supplies[el.dataset.supply] || 0;
+  $('manual').open = f.manualOpen;
+  $('manualGrams').value = f.grams;
+  $('manualH').value = f.h; $('manualM').value = f.m; $('manualS').value = f.s;
+}
+
+function manualOf(it) {
+  const f = it.form;
+  if (!f.manualOpen) return null;
+  const h = hmsToHours(f.h, f.m, f.s);
+  return f.grams > 0 && h > 0 ? { grams: f.grams, hours: h } : null;
+}
+const isEmpty = (it) => !it.fileName && !manualOf(it);
+
+// Opciones del pedido completo (iguales para todos los modelos).
+function orderOptions() {
+  return {
     packaging: $('packaging').value,
-    suppliesPerUnit: Math.max(0, parseFloat($('supplies').value) || 0),
     shipping: $('shipping').value,
     shippingMode: document.querySelector('input[name=shippingMode]:checked').value,
     payment: $('payment').value,
     itbms: $('itbms').checked,
-    supplies: Object.fromEntries([...document.querySelectorAll('#suppliesList input[data-supply]')]
-      .map((el) => [el.dataset.supply, Math.max(0, parseFloat(el.value) || 0)]).filter(([, n]) => n > 0)),
+    urgent: document.querySelector('input[name=urgency]:checked').value === 'urgent',
   };
 }
 
-function manualValues() {
-  if (!$('manual').open) return null;
-  const g = parseFloat($('manualGrams').value);
-  const h = hmsToHours($('manualH').value, $('manualM').value, $('manualS').value);
-  return g > 0 && h > 0 ? { grams: g, hours: h } : null;
-}
-
 // ---------- cálculo ----------
-function currentJob() {
-  const o = options();
+function jobFor(it) {
+  const f = it.form;
   const cfg = state.cfg;
-  const manual = manualValues();
-  const autoLevel = state.analysis?.complexity.level;
-  const level = o.complexity === 'auto' ? (autoLevel || 2) : +o.complexity;
+  const material = cfg.materials[f.material] ? f.material : Object.keys(cfg.materials)[0];
+  const manual = manualOf(it);
+  const autoLevel = it.analysis?.complexity.level;
+  const level = f.complexity === 'auto' ? (autoLevel || 2) : +f.complexity;
 
   let grams, hours, source, exact = false, estimate = null;
   if (manual) {
     ({ grams, hours } = manual); source = 'manual'; exact = true;
-  } else if (state.sliced) {
+  } else if (it.sliced) {
     // Una placa con varias piezas iguales: cada unidad lleva su parte del tiempo y del material.
-    const perFile = Math.max(1, parseInt($('perFile').value, 10) || 1);
-    grams = state.sliced.grams / perFile; hours = state.sliced.hours / perFile; source = 'exact'; exact = true;
-  } else if (state.analysis) {
-    estimate = estimatePrint({ ...state.analysis, complexity: { level } }, {
-      material: cfg.materials[o.material], quality: cfg.qualities[o.quality], estimation: cfg.estimation,
+    grams = it.sliced.grams / f.perFile; hours = it.sliced.hours / f.perFile; source = 'exact'; exact = true;
+  } else if (it.analysis) {
+    estimate = estimatePrint({ ...it.analysis, complexity: { level } }, {
+      material: cfg.materials[material], quality: cfg.qualities[f.quality], estimation: cfg.estimation,
     });
     grams = estimate.grams; hours = estimate.hours; source = 'estimate';
   } else {
     return null;
   }
-  return { ...o, complexity: level, grams, hours, exact, source, estimate };
+  return {
+    material, quality: f.quality, quantity: f.quantity, finish: f.finish, complexity: level,
+    printer: f.printer, suppliesPerUnit: f.suppliesOther, supplies: f.supplies,
+    grams, hours, exact, source, estimate,
+  };
 }
 
 function recompute() {
-  const job = currentJob();
-  const exactSource = !!state.sliced && !manualValues();
+  const it = cur();
+  const exactSource = !!it?.sliced && !manualOf(it);
   for (const el of document.querySelectorAll('input[name=quality]')) el.disabled = exactSource;
   $('quality').classList.toggle('disabled', exactSource);
 
-  if (!job) {
-    state.quote = null;
+  state.entries = state.items.map((item, i) => ({ item, i, job: jobFor(item) })).filter((e) => e.job);
+  const activeJob = it ? jobFor(it) : null;
+  state.quote = state.entries.length ? computeOrder(state.entries.map((e) => e.job), orderOptions(), state.cfg) : null;
+  renderModels();
+  renderAnalysis(activeJob);
+  if (!state.quote) {
     $('emptyResult').hidden = false;
     $('resultBody').hidden = true;
-    renderAnalysis(null);
     return;
   }
-  state.quote = computeQuote(job, state.cfg);
-  state.job = job;
   $('emptyResult').hidden = true;
   $('resultBody').hidden = false;
-  renderAnalysis(job);
-  renderQuote(job, state.quote);
+  renderQuote(state.quote);
+}
+
+// Parte del precio del pedido que le toca a cada modelo (proporcional a su precio por separado).
+function allocated(k, key = 'recommended') {
+  const q = state.quote;
+  const total = q.items.reduce((a, x) => a + x.tiers[key].price, 0);
+  return total > 0 ? q.tiers[key].price * q.items[k].tiers[key].price / total : 0;
+}
+
+function renderModels() {
+  const q = state.quote;
+  $('modelList').innerHTML = state.items.map((it, i) => {
+    const k = state.entries.findIndex((e) => e.item === it);
+    const f = it.form;
+    const meta = `${f.quantity} × ${f.material} · ${t(`finish_${f.finish}`)}`;
+    const sub = q && k >= 0 ? money(allocated(k)) : t('noData');
+    return `<li class="${i === state.active ? 'active' : ''}">
+      <button type="button" class="model-sel" data-sel="${i}" aria-pressed="${i === state.active}">
+        <span class="model-name">${esc(itemName(it, i))}</span><span class="muted small">${esc(meta)}</span>
+      </button>
+      <span class="model-sub ${k < 0 ? 'muted' : ''}">${sub}</span>
+      ${state.items.length > 1 ? `<button type="button" class="del" data-rm="${i}" aria-label="${esc(t('removeModel'))}" title="${esc(t('removeModel'))}">✕</button>` : ''}
+    </li>`;
+  }).join('');
+  $('modelsHint').hidden = state.items.length > 1;
+  $('modelOptionsTitle').textContent = state.items.length > 1
+    ? `${t('modelOptions')}: ${itemName(cur(), state.active)}` : t('options');
+}
+
+async function selectItem(i) {
+  saveForm();
+  state.active = Math.max(0, Math.min(i, state.items.length - 1));
+  loadForm(cur());
+  await showItem(cur());
+  recompute();
+}
+
+function addItem() {
+  saveForm();
+  state.items.push(newItem(cur()));
+  state.active = state.items.length - 1;
+  loadForm(cur());
+  showItem(cur());
+  recompute();
+}
+
+function removeItem(i) {
+  if (state.items.length < 2) return;
+  saveForm();
+  state.items.splice(i, 1);
+  if (state.active > i || state.active >= state.items.length) state.active--;
+  state.active = Math.max(0, state.active);
+  loadForm(cur());
+  showItem(cur());
+  recompute();
 }
 
 // ---------- render ----------
@@ -156,13 +263,14 @@ function renderAnalysis(job) {
     ${reason ? `<span class="muted small">${esc(reason)}</span>` : ''}`;
 }
 
-function renderQuote(job, q) {
+function renderQuote(q) {
+  const multi = q.items.length > 1;
   const tierHtml = (key, main) => {
     const tr = q.tiers[key];
     return `<div class="tier ${main ? 'main' : ''}">
       <span class="name">${t(`tier_${key}`)}</span>
       <span class="price">${money(tr.price)}</span>
-      ${q.quantity > 1 ? `<span class="unit">${money(tr.unit)} ${t('perUnit')}</span>` : ''}
+      ${q.quantity > 1 && !multi ? `<span class="unit">${money(tr.unit)} ${t('perUnit')}</span>` : ''}
       ${tr.clientTotal > tr.price + 0.005 ? `<span class="total">${t('clientTotal')}: ${money(tr.clientTotal)}</span>` : ''}
       <span class="hint">${t(`tier_${key}_hint`)}</span>
       <span class="pill ${tr.status}">${t('margin')} ${pct(tr.margin)}</span>
@@ -171,6 +279,7 @@ function renderQuote(job, q) {
   $('tiers').innerHTML = tierHtml('minimum') + tierHtml('recommended', true) + tierHtml('premium');
 
   const notes = [];
+  if (multi) notes.push(`<li><span>${t('orderModels', { n: q.items.length })}</span><b>${q.quantity} ${t('units')}</b></li>`);
   if (q.discountPct) notes.push(`<li><span>${t('discountApplied')}</span><b>−${pct(q.discountPct)}</b></li>`);
   if (q.urgent) notes.push(`<li><span>${t('urgentApplied')}</span><b>+${pct(state.cfg.urgencyMultiplier - 1)}</b></li>`);
   if (q.shipping.included) notes.push(`<li><span>${t('shipIncludedNote')}</span><b>${money(q.shipping.included)}</b></li>`);
@@ -186,12 +295,17 @@ function renderQuote(job, q) {
   renderSplit();
 
   const warnings = [];
-  if (state.analysis) {
-    if (!fitsBed(state.analysis.sizeMm, currentPrinter().bedMm)) warnings.push(t('w_notFits'));
-    const maxDim = Math.max(...state.analysis.sizeMm);
-    if (maxDim < 3 || maxDim > 2000) warnings.push(t('w_scale'));
+  const who = (e) => (multi ? `${itemName(e.item, e.i)}: ` : '');
+  for (const e of state.entries) {
+    const a = e.item.analysis;
+    if (!a) continue;
+    if (!fitsBed(a.sizeMm, selectPrinter(state.cfg, e.item.form.printer).bedMm)) warnings.push(who(e) + t('w_notFits'));
+    const maxDim = Math.max(...a.sizeMm);
+    if (maxDim < 3 || maxDim > 2000) warnings.push(who(e) + t('w_scale'));
   }
-  for (const w of q.warnings) if (w.code === 'aboveMarket') warnings.push(t('w_aboveMarket', { perGram: money(w.perGram) }));
+  for (const w of q.warnings) {
+    if (w.code === 'aboveMarket') warnings.push(who(state.entries[w.item]) + t('w_aboveMarket', { perGram: money(w.perGram) }));
+  }
   const info = state.notices || [];
   $('warnings').innerHTML = warnings.map((w) => `<li>${esc(w)}</li>`).join('') + info.map(([k, v]) => `<li class="info">${esc(t(k, v))}</li>`).join('');
 
@@ -236,15 +350,16 @@ function renderBreakdown(q) {
   el.classList.toggle('hidden', !state.admin);
   if (!state.admin) return;
   const b = q.breakdown;
+  const multi = q.items.length > 1;
   const rows = [
     [t('b_material'), b.material, `${num(q.grams.total)} g`],
-    [t('b_machine'), b.machine, `${q.printer} · ${duration(q.hours.total)} × ${money(b.machineRate)}${t('perHour')}`],
-    [t('b_overhead'), b.overhead, `${money(b.overheadRate)}${t('perHour')}`],
+    [t('b_machine'), b.machine, multi ? duration(q.hours.total) : `${q.printer} · ${duration(q.hours.total)} × ${money(b.machineRate)}${t('perHour')}`],
+    [t('b_overhead'), b.overhead, multi ? '' : `${money(b.overheadRate)}${t('perHour')}`],
     [t('b_labor'), b.labor, `${Math.round(b.laborMinutes)} min`],
     [t('b_extras'), b.extras, ''],
     [t('b_supplies'), b.supplies, ''],
     [t('b_packaging'), b.packaging, ''],
-    [t('b_risk'), b.risk, pct(state.cfg.failureRiskByComplexity[q.complexity - 1])],
+    [t('b_risk'), b.risk, multi ? '' : pct(state.cfg.failureRiskByComplexity[q.complexity - 1])],
   ].filter(([, v], i) => i < 3 || v > 0.004);
   const rec = q.tiers.recommended;
   const after = [];
@@ -259,61 +374,46 @@ function renderBreakdown(q) {
       <tr class="total"><td>${t('b_price')}</td><td>${money(rec.price)}</td></tr>
       ${rec.tax ? `<tr><td>${t('b_tax')}</td><td>${money(rec.tax)}</td></tr>` : ''}
     </table>
-    <p class="muted small">${t(q.profitDriver === 'goal' ? 'b_driver_goal' : 'b_driver_margin')}</p>`;
+    ${multi ? `<h3>${t('b_perModel')}</h3><table>
+      <tr><th>${t('quoteItem')}</th><th>${t('b_cost')}</th><th>${t('tier_recommended')}</th><th>${t('margin')}</th></tr>
+      ${state.entries.map((e, k) => {
+        const iq = q.items[k];
+        return `<tr><td>${esc(itemName(e.item, e.i))} <span class="muted small">${iq.quantity} × · ${t('complexity')} ${iq.complexity} · ${iq.printer}</span></td><td>${money(iq.cost)}</td><td>${money(allocated(k))}</td><td>${pct(iq.tiers.recommended.margin)}</td></tr>`;
+      }).join('')}</table>
+      <p class="muted small">${t('b_perModelNote')}</p>`
+    : `<p class="muted small">${t(q.profitDriver === 'goal' ? 'b_driver_goal' : 'b_driver_margin')}</p>`}`;
 }
 
 // ---------- archivo ----------
-async function handleFile(file) {
+async function handleFile(file, item = cur()) {
   if (!file) return;
   const status = $('dropStatus');
   status.textContent = t('loading');
   status.classList.remove('hidden');
   try {
     const parsed = await parseFile(file);
-    state.fileName = file.name;
-    state.positions = parsed.positions;
-    state.sliced = parsed.sliced;
-    state.analysis = parsed.positions ? analyzeMesh(parsed.positions, { supportAngleDeg: state.cfg.estimation.supportAngleDeg }) : null;
-    state.notices = [];
-    $('manual').open = false;
-    $('perFile').value = 1;
+    item.fileName = file.name;
+    item.positions = parsed.positions;
+    item.sliced = parsed.sliced;
+    item.analysis = parsed.positions ? analyzeMesh(parsed.positions, { supportAngleDeg: state.cfg.estimation.supportAngleDeg }) : null;
+    item.notices = [];
+    if (item === cur()) saveForm();
+    item.form.manualOpen = false;
+    item.form.perFile = 1;
 
     // Datos del laminado: material y multicolor automáticos
-    if (state.sliced) {
-      const fils = state.sliced.filaments || [];
+    if (item.sliced) {
+      const fils = item.sliced.filaments || [];
       const type = fils[0]?.type?.toUpperCase();
       const match = type && Object.keys(state.cfg.materials).find((m) => type === m.toUpperCase())
         || (type && Object.keys(state.cfg.materials).find((m) => type.startsWith(m.toUpperCase())));
-      if (match) { $('material').value = match; state.notices.push(['w_materialFromFile', { m: match }]); }
-      if (fils.length > 1) { $('finish').value = 'multicolor'; state.notices.push(['w_multicolor', { n: fils.length }]); }
+      if (match) { item.form.material = match; item.notices.push(['w_materialFromFile', { m: match }]); }
+      if (fils.length > 1) { item.form.finish = 'multicolor'; item.notices.push(['w_multicolor', { n: fils.length }]); }
     }
-    if (!state.analysis && $('complexity').value === 'auto') state.notices.push(['w_noGeometry']);
-    if (state.analysis?.inverted) state.notices.push(['w_inverted']);
+    if (!item.analysis && item.form.complexity === 'auto') item.notices.push(['w_noGeometry']);
+    if (item.analysis?.inverted) item.notices.push(['w_inverted']);
 
-    $('fileName').textContent = file.name;
-    $('fileRow').classList.remove('hidden');
-    const badge = $('sourceBadge');
-    badge.className = `badge ${state.sliced ? 'exact' : 'estimate'}`;
-    badge.dataset.i18n = state.sliced ? 'sourceExact' : 'sourceEstimate';
-    badge.textContent = t(badge.dataset.i18n);
-
-    if (state.positions) {
-      $('dropEmpty').classList.add('hidden');
-      $('viewer').classList.remove('hidden');
-      $('drop').classList.add('loaded');
-      if (!state.viewer) {
-        const { createViewer } = await import('./viewer.js');
-        state.viewer = createViewer($('viewer'));
-      }
-      state.viewer.show(state.positions, state.analysis.overhangMask, {
-        base: cssVar('--model'), overhang: cssVar('--overhang'), grid: cssVar('--grid'),
-      });
-    } else {
-      state.viewer?.clear();
-      $('viewer').classList.add('hidden');
-      $('dropEmpty').classList.remove('hidden');
-      $('drop').classList.remove('loaded');
-    }
+    if (item === cur()) { loadForm(item); await showItem(item); }
     recompute();
   } catch (err) {
     console.error(err);
@@ -323,61 +423,120 @@ async function handleFile(file) {
   }
 }
 
+// Varios archivos a la vez: el primero va al modelo activo si está vacío (o si es uno solo,
+// como "cambiar archivo"); el resto crea un modelo nuevo por archivo.
+async function handleFiles(files) {
+  const list = [...(files || [])];
+  for (const [i, file] of list.entries()) {
+    if (i > 0 || (list.length > 1 && !isEmpty(cur()))) addItem();
+    await handleFile(file, cur());
+  }
+}
+
+// Muestra el archivo y el visor del modelo activo.
+async function showItem(it) {
+  $('fileRow').classList.toggle('hidden', !it.fileName);
+  $('fileName').textContent = it.fileName || '';
+  const badge = $('sourceBadge');
+  badge.className = `badge ${it.sliced ? 'exact' : 'estimate'}`;
+  badge.dataset.i18n = it.sliced ? 'sourceExact' : 'sourceEstimate';
+  badge.textContent = t(badge.dataset.i18n);
+  if (it.positions) {
+    $('dropEmpty').classList.add('hidden');
+    $('viewer').classList.remove('hidden');
+    $('drop').classList.add('loaded');
+    if (!state.viewer) {
+      const { createViewer } = await import('./viewer.js');
+      state.viewer = createViewer($('viewer'));
+    }
+    if (it !== cur()) return;
+    state.viewer.show(it.positions, it.analysis.overhangMask, {
+      base: cssVar('--model'), overhang: cssVar('--overhang'), grid: cssVar('--grid'),
+    });
+  } else {
+    state.viewer?.clear();
+    $('viewer').classList.add('hidden');
+    $('dropEmpty').classList.remove('hidden');
+    $('drop').classList.remove('loaded');
+  }
+}
+
 function setupDrop() {
   const drop = $('drop');
   const input = $('fileInput');
   drop.addEventListener('click', () => { if (!drop.classList.contains('loaded')) input.click(); });
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
   $('changeFile').addEventListener('click', () => input.click());
-  input.addEventListener('change', () => { handleFile(input.files[0]); input.value = ''; });
+  input.addEventListener('change', () => { handleFiles(input.files); input.value = ''; });
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', (e) => {
     e.preventDefault();
     drop.classList.remove('over');
-    handleFile(e.dataTransfer.files[0]);
+    handleFiles(e.dataTransfer.files);
   });
 }
 
 // ---------- cotización para el cliente ----------
+function quoteLines() {
+  const q = state.quote;
+  return state.entries.map((e, k) => {
+    const j = e.job;
+    const sub = allocated(k);
+    return {
+      name: itemName(e.item, e.i), job: j, sub, unit: sub / j.quantity,
+      quality: e.item.sliced && !manualOf(e.item) ? '—' : t(`quality_${j.quality}`),
+      qty: q.items[k].quantity,
+    };
+  });
+}
+
 function quoteText() {
-  const q = state.quote, j = state.job;
+  const q = state.quote;
   const rec = q.tiers.recommended;
-  const lines = [
-    t('quoteHeader'),
-    `${t('quoteItem')}: ${state.fileName || '—'}`,
-    `${t('material')}: ${j.material} · ${t('quality')}: ${state.sliced && !manualValues() ? '—' : t(`quality_${j.quality}`)} · ${t('finish')}: ${t(`finish_${j.finish}`)}`,
-    `${t('quantity')}: ${q.quantity} × ${money(rec.unit)} = ${money(rec.price)}`,
+  const lines = [t('quoteHeader')];
+  for (const l of quoteLines()) {
+    lines.push(
+      `${t('quoteItem')}: ${l.name}`,
+      `${t('material')}: ${l.job.material} · ${t('quality')}: ${l.quality} · ${t('finish')}: ${t(`finish_${l.job.finish}`)}`,
+      `${t('quantity')}: ${l.qty} × ${money(l.unit)} = ${money(l.sub)}`,
+    );
+    if (q.items.length > 1) lines.push('');
+  }
+  if (q.items.length > 1) lines.push(`${t('quoteTotal')}: ${money(rec.price)}`);
+  lines.push(
     ...(q.shipping.included ? [t('quoteShipIncluded')] : []),
     ...(rec.tax ? [`${t('b_tax')}: ${money(rec.tax)}`] : []),
     ...(q.shipping.separate ? [`${t('shipping')}: ${money(q.shipping.separate)}`] : []),
     ...(rec.clientTotal > rec.price + 0.005 ? [`${t('clientTotal')}: ${money(rec.clientTotal)}`] : []),
-    `${t('urgency')}: ${t(j.urgent ? 'urgency_urgent' : 'urgency_normal')}`,
+    `${t('urgency')}: ${t(q.urgent ? 'urgency_urgent' : 'urgency_normal')}`,
     t('quoteValid'),
-  ];
+  );
   return lines.join('\n');
 }
 
 function buildPrintSheet() {
   if (!state.quote) return;
-  const q = state.quote, j = state.job;
+  const q = state.quote;
   const rec = q.tiers.recommended;
   const canvas = $('viewer').querySelector('canvas');
   let img = '';
-  if (state.positions && canvas) { try { img = `<img src="${canvas.toDataURL('image/png')}" alt="">`; } catch { /* nada */ } }
+  if (q.items.length === 1 && state.positions && canvas) { try { img = `<img src="${canvas.toDataURL('image/png')}" alt="">`; } catch { /* nada */ } }
+  const rows = quoteLines().map((l) => `<tr><td>${esc(l.name)}</td><td>${esc(l.job.material)}</td><td>${t(`finish_${l.job.finish}`)}</td>
+        <td class="num">${l.qty}</td><td class="num">${money(l.unit)}</td><td class="num"><b>${money(l.sub)}</b></td></tr>`).join('');
   $('printSheet').innerHTML = `
     <h1>${t('quoteHeader')}</h1>
     <div>${new Date().toLocaleDateString(locale())}</div>
     ${img}
     <table>
       <tr><th>${t('quoteItem')}</th><th>${t('material')}</th><th>${t('finish')}</th><th class="num">${t('quantity')}</th><th class="num">${t('perUnit')}</th><th class="num">${t('quoteTotal')}</th></tr>
-      <tr><td>${esc(state.fileName || '—')}</td><td>${esc(j.material)}</td><td>${t(`finish_${j.finish}`)}</td>
-        <td class="num">${q.quantity}</td><td class="num">${money(rec.unit)}</td><td class="num"><b>${money(rec.price)}</b></td></tr>
+      ${rows}
+      ${q.items.length > 1 ? `<tr><td colspan="5"><b>${t('quoteTotal')}</b></td><td class="num"><b>${money(rec.price)}</b></td></tr>` : ''}
     </table>
     ${rec.tax ? `<p>${t('b_tax')}: ${money(rec.tax)}</p>` : ''}
     ${q.shipping.separate ? `<p>${t('shipping')}: ${money(q.shipping.separate)}</p>` : ''}
     ${rec.clientTotal > rec.price + 0.005 ? `<p><b>${t('clientTotal')}: ${money(rec.clientTotal)}</b></p>` : ''}
-    <p>${t('urgency')}: ${t(j.urgent ? 'urgency_urgent' : 'urgency_normal')}</p>
+    <p>${t('urgency')}: ${t(q.urgent ? 'urgency_urgent' : 'urgency_normal')}</p>
     <p>${t('quoteValid')}</p>`;
 }
 
@@ -647,16 +806,28 @@ function refreshLanguage() {
 async function init() {
   state.cfg = await loadConfig();
   fillMaterials();
+  state.items = [newItem()];
+  state.items[0].form.material = $('material').value;
   setupDrop();
   setupAdmin();
   setupListEditors();
   for (const b of document.querySelectorAll('[data-lang]')) {
     b.addEventListener('click', () => { setLang(b.dataset.lang); refreshLanguage(); });
   }
-  $('opts').addEventListener('input', recompute);
-  $('opts').addEventListener('change', recompute);
-  $('manual').addEventListener('input', recompute);
-  $('manual').addEventListener('toggle', recompute);
+  const onItem = () => { saveForm(); recompute(); };
+  $('opts').addEventListener('input', onItem);
+  $('opts').addEventListener('change', onItem);
+  $('manual').addEventListener('input', onItem);
+  $('manual').addEventListener('toggle', onItem);
+  $('orderOpts').addEventListener('input', recompute);
+  $('orderOpts').addEventListener('change', recompute);
+  $('addModel').addEventListener('click', addItem);
+  $('modelList').addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { removeItem(+rm.dataset.rm); return; }
+    const sel = e.target.closest('[data-sel]');
+    if (sel && +sel.dataset.sel !== state.active) selectItem(+sel.dataset.sel);
+  });
   $('negotiated').addEventListener('input', () => { renderNegotiated(); renderSplit(); });
   $('splitTier').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tier]');

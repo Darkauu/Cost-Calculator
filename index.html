@@ -33,8 +33,16 @@
 
   <main class="layout">
     <section class="col">
+      <div class="card models" id="modelsCard">
+        <div class="models-head">
+          <h2 data-i18n="models"></h2>
+          <button type="button" class="btn small" id="addModel" data-i18n="addModel"></button>
+        </div>
+        <ul class="model-list" id="modelList"></ul>
+        <p class="muted small" id="modelsHint" data-i18n="modelsHint"></p>
+      </div>
       <div class="drop" id="drop" tabindex="0" role="button">
-        <input type="file" id="fileInput" accept=".stl,.3mf,.obj,.gcode,.gco" hidden>
+        <input type="file" id="fileInput" accept=".stl,.3mf,.obj,.gcode,.gco" multiple hidden>
         <div class="drop-empty" id="dropEmpty">
           <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
           <strong data-i18n="dropTitle"></strong>
@@ -75,7 +83,7 @@
 
     <section class="col">
       <div class="card">
-        <h2 data-i18n="options"></h2>
+        <h2 id="modelOptionsTitle" data-i18n="options"></h2>
         <form id="opts" class="opts" onsubmit="return false">
           <label><span data-i18n="material"></span><select id="material"></select></label>
           <label><span data-i18n="quantity"></span><input type="number" id="quantity" value="1" min="1" step="1" inputmode="numeric"></label>
@@ -88,28 +96,10 @@
             </select>
           </label>
           <label><span data-i18n="perFile"></span><input type="number" id="perFile" value="1" min="1" step="1" inputmode="numeric" data-i18n-title="perFileHint"></label>
-          <label><span data-i18n="packaging"></span><select id="packaging"></select></label>
-          <label><span data-i18n="payment"></span><select id="payment"></select></label>
-          <label><span data-i18n="shipping"></span><select id="shipping"></select></label>
-          <fieldset>
-            <legend data-i18n="shippingMode"></legend>
-            <div class="seg" id="shippingMode">
-              <label><input type="radio" name="shippingMode" value="included" checked><span data-i18n="shippingMode_included"></span></label>
-              <label><input type="radio" name="shippingMode" value="separate"><span data-i18n="shippingMode_separate"></span></label>
-            </div>
-          </fieldset>
-          <fieldset class="full">
-            <legend data-i18n="urgency"></legend>
-            <div class="seg" id="urgency">
-              <label><input type="radio" name="urgency" value="normal" checked><span data-i18n="urgency_normal"></span></label>
-              <label><input type="radio" name="urgency" value="urgent"><span data-i18n="urgency_urgent"></span></label>
-            </div>
-          </fieldset>
           <fieldset class="full" id="suppliesBox">
             <legend data-i18n="suppliesTitle"></legend>
             <div class="supplies" id="suppliesList"></div>
           </fieldset>
-          <label class="full check"><input type="checkbox" id="itbms"><span id="itbmsLabel" data-i18n="itbms"></span></label>
           <details class="full advanced" id="advanced">
             <summary data-i18n="advancedOptions"></summary>
             <div class="opts">
@@ -131,6 +121,31 @@
               <label><span data-i18n="supplies"></span><input type="number" id="supplies" value="0" min="0" step="0.05" inputmode="decimal"></label>
             </div>
           </details>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2 data-i18n="orderOptions"></h2>
+        <p class="muted small" data-i18n="orderHint"></p>
+        <form id="orderOpts" class="opts" onsubmit="return false">
+          <label><span data-i18n="packaging"></span><select id="packaging"></select></label>
+          <label><span data-i18n="payment"></span><select id="payment"></select></label>
+          <label><span data-i18n="shipping"></span><select id="shipping"></select></label>
+          <fieldset>
+            <legend data-i18n="shippingMode"></legend>
+            <div class="seg" id="shippingMode">
+              <label><input type="radio" name="shippingMode" value="included" checked><span data-i18n="shippingMode_included"></span></label>
+              <label><input type="radio" name="shippingMode" value="separate"><span data-i18n="shippingMode_separate"></span></label>
+            </div>
+          </fieldset>
+          <fieldset class="full">
+            <legend data-i18n="urgency"></legend>
+            <div class="seg" id="urgency">
+              <label><input type="radio" name="urgency" value="normal" checked><span data-i18n="urgency_normal"></span></label>
+              <label><input type="radio" name="urgency" value="urgent"><span data-i18n="urgency_urgent"></span></label>
+            </div>
+          </fieldset>
+          <label class="full check"><input type="checkbox" id="itbms"><span id="itbmsLabel" data-i18n="itbms"></span></label>
         </form>
       </div>
 

@@ -217,10 +217,11 @@ test('pedido con varios modelos: cada uno con sus parámetros', () => {
   }
 });
 
-test('pedido de un solo modelo ≈ cotización simple', () => {
+test('pedido de un solo modelo = cotización simple', () => {
   const single = computeQuote({ ...base, quantity: 5, ...orderOpts }, cfg);
   const order = computeOrder([{ ...base, quantity: 5 }], orderOpts, cfg);
-  assert.ok(Math.abs(order.tiers.recommended.price - single.tiers.recommended.price) <= 1.5);
+  for (const k of ['minimum', 'recommended', 'premium']) assert.equal(order.tiers[k].price, single.tiers[k].price);
+  assert.equal(order.items.length, 1);
   assert.ok(order.tiers.minimum.margin >= cfg.minMargin - 1e-9);
 });
 

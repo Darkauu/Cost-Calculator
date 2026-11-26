@@ -213,6 +213,11 @@ export function computeQuote(job, cfg) {
  */
 export function computeOrder(jobs, order, cfg) {
   if (!jobs.length) throw new Error('El pedido no tiene modelos');
+  // Un solo modelo: el precio es exactamente el de computeQuote (sin redondeos dobles).
+  if (jobs.length === 1) {
+    const q = computeQuote({ ...jobs[0], ...order }, cfg);
+    return { ...q, items: [q], warnings: q.warnings.map((w) => ({ ...w, item: 0 })) };
+  }
   const itemCfg = { ...cfg, minOrderPrice: 0 };
   const quotes = jobs.map((j) => computeQuote({
     ...j,
