@@ -118,6 +118,11 @@ h2 { font-size: 1rem; margin: 0 0 .75rem; }
 .dots { display: flex; gap: 4px; }
 .dots i { width: 22px; height: 8px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--border); }
 .dots i.on { background: var(--accent); border-color: var(--accent); }
+.dots.pick { align-items: center; flex-wrap: wrap; }
+.dots.pick button { width: 30px; height: 14px; padding: 0; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; }
+.dots.pick button.on { background: var(--accent); border-color: var(--accent); }
+.dots.pick button:hover { outline: 2px solid var(--accent-soft); }
+.dots.pick button.auto { width: auto; height: auto; padding: 2px 8px; font: inherit; font-size: .78rem; color: var(--accent); background: none; border-color: var(--accent); }
 
 .manual summary { cursor: pointer; font-weight: 600; }
 .manual[open] summary { margin-bottom: 12px; }

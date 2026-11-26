@@ -50,7 +50,7 @@ Margen      = (precio − comisión − empaquetado − envío − costo) ÷ (pr
 Así el **mínimo** sigue garantizando el margen mínimo aunque se cobre con tarjeta, se incluya el envío o se agregue packaging: la comisión y el envío no se comen la ganancia.
 
 - **Meta mensual ($300):** se reparte entre las horas de máquina que esperas vender al mes (120 h por defecto, o sea $2.50 por hora). Las impresiones largas quedan protegidas porque nunca ocupan la impresora sin aportar a la meta.
-- **Complejidad 1–5:** combina detalle fino (superficie/volumen), voladizos (% de la superficie que necesita soporte) y esbeltez (piezas altas y delgadas). Sube el tiempo, el riesgo, el postproceso y el margen. Ventas puede forzarla a mano.
+- **Complejidad 1–5:** el sistema la propone combinando detalle (superficie de la pieza respecto a su caja envolvente: una placa plana o delgada no cuenta como detallada), voladizos (% de la superficie que necesita soporte, sin contar el primer milímetro sobre la cama) y esbeltez (piezas altas y delgadas). Sube el tiempo, el riesgo, el postproceso y el margen. **Tú decides:** cámbiala en el selector "Complejidad" de cada modelo o haciendo clic en los puntos del análisis; "Automática (n)" vuelve a la propuesta.
 - **Sin quedar caros:** si el precio por gramo supera la referencia de mercado ($0.50/g en pedidos de 30 g o más), aparece una alerta.
 
 Ejemplos con la configuración inicial (PLA, P2S, datos exactos):

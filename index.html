@@ -103,6 +103,12 @@
               <option value="multicolor" data-i18n="finish_multicolor"></option>
             </select>
           </label>
+          <label><span data-i18n="complexityOverride"></span>
+            <select id="complexity">
+              <option value="auto" data-i18n="complexityAuto"></option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+          </label>
           <label><span data-i18n="perFile"></span><input type="number" id="perFile" value="1" min="1" step="1" inputmode="numeric" data-i18n-title="perFileHint"></label>
           <fieldset class="full" id="suppliesBox">
             <legend data-i18n="suppliesTitle"></legend>
@@ -112,12 +118,6 @@
             <summary data-i18n="advancedOptions"></summary>
             <div class="opts">
               <label id="printerField"><span data-i18n="printer"></span><select id="printer"></select></label>
-              <label><span data-i18n="complexityOverride"></span>
-                <select id="complexity">
-                  <option value="auto" data-i18n="complexityAuto"></option>
-                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
-                </select>
-              </label>
               <fieldset class="full">
                 <legend data-i18n="quality"></legend>
                 <div class="seg" id="quality">
