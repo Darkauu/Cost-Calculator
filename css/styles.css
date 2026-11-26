@@ -121,6 +121,47 @@ h2 { font-size: 1rem; margin: 0 0 .75rem; }
 
 .manual summary { cursor: pointer; font-weight: 600; }
 .manual[open] summary { margin-bottom: 12px; }
+.manual-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 12px; }
+.hms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.hms label { display: flex; align-items: center; gap: 4px; }
+.hms label > span { margin: 0; font-size: .85rem; }
+@media (max-width: 520px) { .manual-grid { grid-template-columns: 1fr; } }
+
+/* insumos y opciones avanzadas */
+.supplies { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px 12px; }
+.supplies label { display: flex; align-items: center; gap: 8px; font-size: .88rem; min-width: 0; }
+.supplies label > span { margin: 0; color: var(--text); font-size: .88rem; flex: 1; min-width: 0; }
+.supplies input[type=number] { width: 58px; padding: 5px 6px; }
+.supplies .cost { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+.advanced { border-top: 1px dashed var(--border); padding-top: 10px; }
+.advanced summary { cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--muted); }
+.advanced[open] summary { margin-bottom: 12px; }
+
+/* desglose del precio (vendedores) */
+.split { margin-top: 16px; }
+.split-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.split-head h3 { font-size: .9rem; margin: 0; }
+.seg.small > button { padding: 4px 10px; font-size: .8rem; }
+.split-table { width: 100%; border-collapse: collapse; font-size: .86rem; font-variant-numeric: tabular-nums; }
+.split-table td { padding: 3px 0; vertical-align: middle; }
+.split-table .amt { text-align: right; width: 84px; white-space: nowrap; }
+.split-table .pct { text-align: right; width: 42px; color: var(--muted); font-size: .78rem; }
+.split-table .bar { width: 34%; padding-left: 10px; }
+.split-table .bar i { display: block; height: 6px; border-radius: 3px; background: var(--accent); opacity: .8; min-width: 2px; }
+.split-table tr.profit .bar i { background: var(--good); opacity: 1; }
+.split-table tr.profit.neg td { color: var(--bad); }
+.split-table tr.tax .bar i { background: var(--muted); }
+.split-table tr.total td { border-top: 1px solid var(--border); font-weight: 700; padding-top: 6px; }
+.split-table tr.total td:last-child { text-align: right; padding-left: 10px; }
+
+/* listas editables del admin */
+.admin-list { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.admin-list th { text-align: left; font-weight: 500; color: var(--muted); font-size: .75rem; padding: 2px 4px; }
+.admin-list td { padding: 3px 4px; }
+.admin-list input { padding: 6px 7px; }
+.admin-list .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 1rem; padding: 4px 6px; }
+.admin-list .del:hover { color: var(--bad); }
+.admin-list-wrap { overflow-x: auto; }
 
 /* formulario */
 .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

@@ -1,7 +1,7 @@
 import { loadConfig, saveLocalConfig, clearLocalConfig, mergeConfig, DEFAULT_CONFIG } from './config.js';
 import { t, getLang, setLang, applyI18n } from './i18n.js';
 import { analyzeMesh, estimatePrint, fitsBed } from './geometry.js';
-import { computeQuote, machineRatePerHour, selectPrinter } from './pricing.js';
+import { computeQuote, machineRatePerHour, selectPrinter, hmsToHours } from './pricing.js';
 import { parseFile } from './parsers.js';
 
 const $ = (id) => document.getElementById(id);
@@ -55,13 +55,15 @@ function options() {
     shippingMode: document.querySelector('input[name=shippingMode]:checked').value,
     payment: $('payment').value,
     itbms: $('itbms').checked,
+    supplies: Object.fromEntries([...document.querySelectorAll('#suppliesList input[data-supply]')]
+      .map((el) => [el.dataset.supply, Math.max(0, parseFloat(el.value) || 0)]).filter(([, n]) => n > 0)),
   };
 }
 
 function manualValues() {
   if (!$('manual').open) return null;
   const g = parseFloat($('manualGrams').value);
-  const h = parseFloat($('manualHours').value);
+  const h = hmsToHours($('manualH').value, $('manualM').value, $('manualS').value);
   return g > 0 && h > 0 ? { grams: g, hours: h } : null;
 }
 
@@ -181,6 +183,7 @@ function renderQuote(job, q) {
   $('notes').innerHTML = notes.join('');
 
   renderNegotiated();
+  renderSplit();
 
   const warnings = [];
   if (state.analysis) {
@@ -193,6 +196,29 @@ function renderQuote(job, q) {
   $('warnings').innerHTML = warnings.map((w) => `<li>${esc(w)}</li>`).join('') + info.map(([k, v]) => `<li class="info">${esc(t(k, v))}</li>`).join('');
 
   renderBreakdown(q);
+}
+
+// ---------- desglose del precio (visible para ventas) ----------
+const SPLIT_ORDER = ['minimum', 'recommended', 'premium', 'negotiated'];
+function renderSplit() {
+  const q = state.quote;
+  if (!q) return;
+  const neg = parseFloat($('negotiated').value);
+  const keys = SPLIT_ORDER.filter((k) => k !== 'negotiated' || neg > 0);
+  if (!keys.includes(state.splitTier)) state.splitTier = 'recommended';
+  $('splitTier').innerHTML = keys.map((k) =>
+    `<button type="button" data-tier="${k}" class="${k === state.splitTier ? 'active' : ''}" aria-pressed="${k === state.splitTier}">${t(k === 'negotiated' ? 'tier_negotiated' : `tier_${k}`)}</button>`).join('');
+  const price = state.splitTier === 'negotiated' ? neg : q.tiers[state.splitTier].price;
+  const tr = q.evaluate(price);
+  const parts = q.split(price).filter(([k, v]) => k === 'profit' || v > 0.004);
+  const scale = parts.reduce((a, [, v]) => a + Math.max(0, v), 0) || 1;
+  const rows = parts.map(([k, v]) => {
+    const p = Math.max(0, v) / scale * 100;
+    const cls = k === 'profit' ? `profit${v < 0 ? ' neg' : ''}` : k === 'tax' ? 'tax' : '';
+    return `<tr class="${cls}"><td>${esc(t(`s_${k}`))}</td><td class="amt">${money(v)}</td><td class="pct">${Math.round(p)}%</td><td class="bar"><i style="width:${p.toFixed(1)}%"></i></td></tr>`;
+  });
+  rows.push(`<tr class="total"><td>${t('s_total')}</td><td class="amt">${money(price + tr.tax)}</td><td colspan="2"><span class="pill ${tr.status}">${t('margin')} ${pct(tr.margin)} · ${t(`status_${tr.status}`)}</span></td></tr>`);
+  $('splitBody').innerHTML = rows.join('');
 }
 
 function renderNegotiated() {
@@ -368,13 +394,79 @@ const ADMIN_SECTIONS = [
   ['sec_printer', [['printer.name', 'text'], ['printer.priceUsd'], ['printer.lifeHours'], ['printer.powerKw'], ['printer.maintenancePerHour']]],
   ['sec_printer2', [['printer2.name', 'text'], ['printer2.priceUsd'], ['printer2.lifeHours'], ['printer2.powerKw'], ['printer2.maintenancePerHour']]],
   ['sec_costs', [['electricityPerKwh'], ['laborPerHour'], ['setupMinutes'], ['fixedCostsMonthly'], ['itbmsRate', 'pct']]],
-  ['sec_packaging', [['packaging.basic.unit'], ['packaging.basic.order'], ['packaging.gift.unit'], ['packaging.gift.order']]],
-  ['sec_shipping', [['shipping.pickup'], ['shipping.city'], ['shipping.outer'], ['shipping.interior']]],
-  ['sec_payments', [['paymentFees.cash', 'pct'], ['paymentFees.yappy', 'pct'], ['paymentFees.transfer', 'pct'], ['paymentFees.card', 'pct']]],
   ['sec_pricing', [['monthlyProfitGoal'], ['sellableHoursPerMonth'], ['minOrderPrice'], ['minMargin', 'pct'], ['premiumMultiplier'], ['urgencyMultiplier'], ['roundingStep'], ['marketMaxPerGram']]],
   ['sec_complexity', [['marginByComplexity', 'pctlist'], ['failureRiskByComplexity', 'pctlist'], ['postMinutesByComplexity', 'list']]],
   ['sec_estimation', [['estimation.infill', 'pct'], ['estimation.massCalibration'], ['estimation.timeCalibration']]],
 ];
+// Listas que el administrador puede ampliar o recortar: filamentos, insumos, packaging,
+// envíos y métodos de pago. Cada fila es un elemento; "Agregar" crea una fila vacía.
+const ADMIN_LISTS = [
+  { key: 'materials', title: 'sec_materials', nameIsKey: true, fields: [['costPerKg', 'num', 'col_costPerKg'], ['density', 'num', 'col_density'], ['speedFactor', 'num', 'col_speedFactor']], blank: { costPerKg: 25, density: 1.24, speedFactor: 1 } },
+  { key: 'supplies', title: 'sec_supplies', fields: [['cost', 'num', 'col_costUnit']], blank: { cost: 0.1 } },
+  { key: 'packaging', title: 'sec_packaging', fields: [['unit', 'num', 'col_perUnit'], ['order', 'num', 'col_perOrder']], blank: { unit: 0.2, order: 0 } },
+  { key: 'shipping', title: 'sec_shipping', fields: [['cost', 'num', 'col_cost']], blank: { cost: 0 } },
+  { key: 'paymentFees', title: 'sec_payments', fields: [['pct', 'pct', 'col_pct']], blank: { pct: 0 } },
+];
+
+function listRow(spec, id, v) {
+  const name = spec.nameIsKey ? id : (v.name ?? '');
+  const cells = spec.fields.map(([f, type]) => {
+    const raw = v[f] ?? 0;
+    const shown = type === 'pct' ? +(raw * 100).toFixed(3) : raw;
+    return `<td><input type="number" step="any" data-f="${f}" data-type="${type}" value="${esc(shown)}"></td>`;
+  }).join('');
+  return `<tr data-id="${esc(id)}"><td><input type="text" data-f="name" value="${esc(name)}" aria-label="${esc(t('col_name'))}"></td>${cells}<td><button type="button" class="del" data-del aria-label="${esc(t('remove'))}">✕</button></td></tr>`;
+}
+
+function listEditor(spec, list) {
+  return `<div class="admin-sec" data-list="${spec.key}"><h3>${t(spec.title)}</h3>
+    <div class="admin-list-wrap"><table class="admin-list"><thead><tr><th>${t('col_name')}</th>${spec.fields.map(([, , l]) => `<th>${t(l)}</th>`).join('')}<th></th></tr></thead>
+    <tbody>${Object.entries(list).map(([id, v]) => listRow(spec, id, v)).join('')}</tbody></table></div>
+    <button type="button" class="btn small" data-add="${spec.key}">${t('addItem')}</button></div>`;
+}
+
+function slug(s) {
+  return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'item';
+}
+
+function collectLists(cfg) {
+  for (const spec of ADMIN_LISTS) {
+    const box = $('adminFields').querySelector(`[data-list="${spec.key}"]`);
+    if (!box) continue;
+    const out = {};
+    for (const tr of box.querySelectorAll('tbody tr')) {
+      const name = tr.querySelector('[data-f=name]').value.trim();
+      if (!name) continue;
+      let id = spec.nameIsKey ? name : (tr.dataset.id || slug(name));
+      while (out[id]) id += '-2';
+      const prev = (cfg[spec.key] || {})[tr.dataset.id] || {};
+      const item = spec.nameIsKey ? { ...prev } : { ...prev, name };
+      for (const el of tr.querySelectorAll('input[data-f]:not([data-f=name])')) {
+        let v = parseFloat(el.value);
+        if (!Number.isFinite(v)) v = 0;
+        if (el.dataset.type === 'pct') v /= 100;
+        item[el.dataset.f] = v;
+      }
+      out[id] = item;
+    }
+    if (spec.key === 'materials' && !Object.keys(out).length) throw new Error(t('needMaterial'));
+    cfg[spec.key] = out;
+  }
+}
+
+function setupListEditors() {
+  $('adminFields').addEventListener('click', (e) => {
+    const del = e.target.closest('[data-del]');
+    if (del) { del.closest('tr').remove(); return; }
+    const add = e.target.closest('[data-add]');
+    if (!add) return;
+    const spec = ADMIN_LISTS.find((x) => x.key === add.dataset.add);
+    const tbody = add.parentElement.querySelector('tbody');
+    tbody.insertAdjacentHTML('beforeend', listRow(spec, '', { ...spec.blank, name: '' }));
+    tbody.lastElementChild.querySelector('input').focus();
+  });
+}
+
 const getPath = (o, p) => p.split('.').reduce((a, k) => a?.[k], o);
 const setPath = (o, p, v) => { const ks = p.split('.'); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; };
 
@@ -411,8 +503,7 @@ function renderAdmin() {
     }
     html += '</div>';
   }
-  html += `<div class="admin-sec"><h3>${t('sec_materials')}</h3><div class="admin-grid">${Object.entries(cfg.materials).map(([m, v]) =>
-    `<label><span>${esc(m)}</span><input data-path="materials.${esc(m)}.costPerKg" data-type="num" type="number" step="any" value="${v.costPerKg}"></label>`).join('')}</div></div>`;
+  for (const spec of ADMIN_LISTS) html += listEditor(spec, cfg[spec.key] || {});
   html += `<div class="admin-sec"><h3>PIN</h3><div class="admin-grid"><label><span>${t('newPin')}</span><input type="password" id="newPin" autocomplete="new-password"></label></div></div>`;
   html += `<details class="admin-sec"><summary>${t('sec_advanced')}</summary><textarea id="rawCfg" spellcheck="false">${esc(JSON.stringify(cfg, null, 2))}</textarea></details>`;
   $('adminFields').innerHTML = html;
@@ -434,6 +525,7 @@ async function collectAdmin() {
       if (el.dataset.index != null) getPath(cfg, el.dataset.path)[+el.dataset.index] = v;
       else setPath(cfg, el.dataset.path, v);
     }
+    collectLists(cfg);
   }
   const pin = $('newPin')?.value;
   if (pin) cfg.adminPinHash = await sha256(pin);
@@ -516,10 +608,24 @@ function fillPrinterAndShipping() {
   ps.innerHTML = list.map(([k, p]) => `<option value="${k}">${esc(p.name)}</option>`).join('');
   ps.value = list.some(([k]) => k === prevP) ? prevP : 'printer';
   $('printerField').hidden = list.length < 2;
-  const ss = $('shipping');
-  const prevS = ss.value || 'pickup';
-  ss.innerHTML = Object.entries(cfg.shipping || {}).map(([k, v]) => `<option value="${esc(k)}">${esc(t('shipping_' + k))} · ${money(v)}</option>`).join('');
-  ss.value = cfg.shipping?.[prevS] != null ? prevS : Object.keys(cfg.shipping || {})[0];
+  fillSelect('shipping', cfg.shipping, (v) => `${v.name} · ${money(v.cost)}`, 'pickup');
+  fillSelect('packaging', cfg.packaging, (v) => v.name + (v.unit ? ` · ${money(v.unit)} ${t('perUnit')}` : ''), 'basic');
+  fillSelect('payment', cfg.paymentFees, (v) => v.name + (v.pct ? ` (${num(v.pct * 100, 1)}%)` : ''), 'yappy');
+  $('itbmsLabel').textContent = t('itbms', { rate: num((cfg.itbmsRate || 0) * 100, 0) });
+  // Insumos del catálogo: cantidad por unidad (se conserva lo que ya estaba marcado).
+  const prev = Object.fromEntries([...document.querySelectorAll('#suppliesList input[data-supply]')].map((el) => [el.dataset.supply, el.value]));
+  const entries = Object.entries(cfg.supplies || {});
+  $('suppliesBox').hidden = !entries.length;
+  $('suppliesList').innerHTML = entries.map(([id, v]) =>
+    `<label><input type="number" min="0" step="1" value="${esc(prev[id] ?? 0)}" data-supply="${esc(id)}" aria-label="${esc(v.name)}"><span>${esc(v.name)}</span><span class="cost">${money(v.cost)}</span></label>`).join('');
+}
+
+function fillSelect(id, list, label, fallback) {
+  const el = $(id);
+  const prev = el.value || fallback;
+  const keys = Object.keys(list || {});
+  el.innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(label(list[k]))}</option>`).join('');
+  el.value = keys.includes(prev) ? prev : (keys.includes(fallback) ? fallback : keys[0] || '');
 }
 
 function fillMaterials() {
@@ -543,6 +649,7 @@ async function init() {
   fillMaterials();
   setupDrop();
   setupAdmin();
+  setupListEditors();
   for (const b of document.querySelectorAll('[data-lang]')) {
     b.addEventListener('click', () => { setLang(b.dataset.lang); refreshLanguage(); });
   }
@@ -550,7 +657,11 @@ async function init() {
   $('opts').addEventListener('change', recompute);
   $('manual').addEventListener('input', recompute);
   $('manual').addEventListener('toggle', recompute);
-  $('negotiated').addEventListener('input', renderNegotiated);
+  $('negotiated').addEventListener('input', () => { renderNegotiated(); renderSplit(); });
+  $('splitTier').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tier]');
+    if (b) { state.splitTier = b.dataset.tier; renderSplit(); }
+  });
   $('copyBtn').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(quoteText()); toast(t('copied')); } catch { toast(quoteText()); }
   });

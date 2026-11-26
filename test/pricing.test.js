@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeQuote, machineRatePerHour, roundUp, quantityDiscount, marginStatus, selectPrinter } from '../js/pricing.js';
+import { computeQuote, machineRatePerHour, roundUp, quantityDiscount, marginStatus, selectPrinter, hmsToHours } from '../js/pricing.js';
 import { DEFAULT_CONFIG, mergeConfig } from '../js/config.js';
 
 const cfg = DEFAULT_CONFIG;
@@ -160,4 +160,35 @@ test('H2C usa su propio costo por hora', () => {
   assert.ok(h2c.breakdown.machine > p2s.breakdown.machine);
   const off = mergeConfig(cfg, { printer2: { enabled: false } });
   assert.equal(selectPrinter(off, 'printer2'), off.printer);
+});
+
+test('insumos del catálogo por unidad', () => {
+  const q = computeQuote({ ...base, quantity: 10, supplies: { ring: 1, magnet: 2 }, suppliesPerUnit: 0.1 }, cfg);
+  close(q.breakdown.supplies, (0.12 + 0.30 + 0.1) * 10);
+});
+
+test('el desglose de un precio suma exactamente ese precio (+ ITBMS)', () => {
+  const q = computeQuote({ ...base, quantity: 6, packaging: 'gift', shipping: 'city', payment: 'card', itbms: true, supplies: { ring: 1 } }, cfg);
+  for (const key of ['minimum', 'recommended', 'premium']) {
+    const tr = q.tiers[key];
+    const sum = q.split(tr.price).reduce((a, [, v]) => a + v, 0);
+    close(sum, tr.price + tr.tax);
+  }
+});
+
+test('listas del admin: reemplazan a las de fábrica y aceptan el formato anterior', () => {
+  const c = mergeConfig(cfg, { supplies: { cord: { name: 'Cordón', cost: 0.3 } }, shipping: { pickup: 0, city: 5 }, paymentFees: { card: 0.05 } });
+  assert.deepEqual(Object.keys(c.supplies), ['cord']);
+  assert.deepEqual(c.shipping.city, { name: 'Delivery Ciudad de Panamá', cost: 5 });
+  assert.equal(c.paymentFees.card.pct, 0.05);
+  const q = computeQuote({ ...base, shipping: 'city', payment: 'card' }, c);
+  close(q.shipping.included, 5);
+  close(q.feePct, 0.05);
+});
+
+test('tiempo en casillas h / m / s', () => {
+  close(hmsToHours(2, 35, 0), 2 + 35 / 60);
+  close(hmsToHours('0', '0', '90'), 90 / 3600);
+  close(hmsToHours('', '45', ''), 0.75);
+  close(hmsToHours(-1, 'x', 30), 30 / 3600);
 });
