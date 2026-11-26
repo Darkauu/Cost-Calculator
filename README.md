@@ -20,6 +20,7 @@ Es una página estática: no tiene servidor ni instalación, y el archivo del cl
    - 🟢 margen saludable · 🟡 margen bajo · 🔴 requiere aprobación (por debajo del margen mínimo).
 4. **Desglose del precio:** debajo de los precios se ve en qué se va cada dólar (filamento, máquina, gastos fijos, riesgo, mano de obra, insumos, packaging, envío, comisión, ganancia e ITBMS) con barras y el margen. Se puede ver para el mínimo, el recomendado, el premium o el precio negociado.
 5. Usa "Copiar cotización" para WhatsApp o correo, o "Imprimir / PDF".
+   - El PDF se titula **Cotización de Vertex Studio #AAAAMMDDxxxx**: la fecha más 4 cifras al azar que no se repiten el mismo día en ese navegador. El número cambia cuando cambia la cotización. Ya no salen el título de la pestaña ni la dirección del sitio en los bordes de la página.
 
 En el visor 3D, las caras en naranja necesitan soporte.
 

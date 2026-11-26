@@ -153,6 +153,7 @@ function recompute() {
 
   state.entries = state.items.map((item, i) => ({ item, i, job: jobFor(item) })).filter((e) => e.job);
   const activeJob = it ? jobFor(it) : null;
+  state.quoteNo = null; // la cotización cambió: el próximo PDF lleva número nuevo
   state.quote = state.entries.length ? computeOrder(state.entries.map((e) => e.job), orderOptions(), state.cfg) : null;
   renderModels();
   renderAnalysis(activeJob);
@@ -478,6 +479,23 @@ function setupDrop() {
 }
 
 // ---------- cotización para el cliente ----------
+// Número de cotización: fecha (AAAAMMDD) + 4 cifras al azar que no se repiten el mismo día
+// en este navegador. Se guarda solo la lista del día actual.
+function newQuoteNumber() {
+  const d = new Date();
+  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  let used = [];
+  try {
+    const saved = JSON.parse(localStorage.getItem('cc3d.quoteNumbers') || 'null');
+    if (saved?.date === date && Array.isArray(saved.used)) used = saved.used;
+  } catch { /* sin almacenamiento: solo al azar */ }
+  let n;
+  do { n = 1000 + Math.floor(Math.random() * 9000); } while (used.includes(n) && used.length < 9000);
+  try { localStorage.setItem('cc3d.quoteNumbers', JSON.stringify({ date, used: [...used, n] })); } catch { /* nada */ }
+  return `${date}${n}`;
+}
+const pdfTitle = () => t('pdfTitle', { no: state.quoteNo || (state.quoteNo = newQuoteNumber()) });
+
 function quoteLines() {
   const q = state.quote;
   return state.entries.map((e, k) => {
@@ -525,7 +543,7 @@ function buildPrintSheet() {
   const rows = quoteLines().map((l) => `<tr><td>${esc(l.name)}</td><td>${esc(l.job.material)}</td><td>${t(`finish_${l.job.finish}`)}</td>
         <td class="num">${l.qty}</td><td class="num">${money(l.unit)}</td><td class="num"><b>${money(l.sub)}</b></td></tr>`).join('');
   $('printSheet').innerHTML = `
-    <h1>${t('quoteHeader')}</h1>
+    <h1>${esc(pdfTitle())}</h1>
     <div>${new Date().toLocaleDateString(locale())}</div>
     ${img}
     <table>
@@ -837,7 +855,10 @@ async function init() {
     try { await navigator.clipboard.writeText(quoteText()); toast(t('copied')); } catch { toast(quoteText()); }
   });
   $('printBtn').addEventListener('click', () => { buildPrintSheet(); window.print(); });
-  window.addEventListener('beforeprint', buildPrintSheet);
+  // El título de la pestaña es el nombre sugerido del PDF; se restaura al terminar.
+  const appTitle = document.title;
+  window.addEventListener('beforeprint', () => { buildPrintSheet(); if (state.quote) document.title = pdfTitle(); });
+  window.addEventListener('afterprint', () => { document.title = appTitle; });
   refreshLanguage();
 }
 
