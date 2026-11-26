@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeQuote, machineRatePerHour, roundUp, quantityDiscount, marginStatus, selectPrinter, hmsToHours } from '../js/pricing.js';
+import { computeQuote, machineRatePerHour, roundUp, quantityDiscount, marginStatus, selectPrinter, hmsToHours, computeOrder } from '../js/pricing.js';
 import { DEFAULT_CONFIG, mergeConfig } from '../js/config.js';
 
 const cfg = DEFAULT_CONFIG;
@@ -191,4 +191,47 @@ test('tiempo en casillas h / m / s', () => {
   close(hmsToHours('0', '0', '90'), 90 / 3600);
   close(hmsToHours('', '45', ''), 0.75);
   close(hmsToHours(-1, 'x', 30), 30 / 3600);
+});
+
+const orderOpts = { packaging: 'basic', shipping: 'city', shippingMode: 'included', payment: 'card', itbms: true };
+
+test('pedido con varios modelos: cada uno con sus parámetros', () => {
+  const jobs = [
+    { ...base, quantity: 20, grams: 8, hours: 0.4, complexity: 1 },
+    { ...base, quantity: 2, grams: 120, hours: 5, complexity: 3, material: 'PETG', finish: 'painted', supplies: { magnet: 4 } },
+  ];
+  const o = computeOrder(jobs, orderOpts, cfg);
+  assert.equal(o.items.length, 2);
+  assert.equal(o.quantity, 22);
+  assert.equal(o.items[1].breakdown.supplies > 0, true);
+  // el costo por pedido del packaging se cuenta una sola vez
+  close(o.breakdown.packaging, 0.18 * 22 + 0.10);
+  close(o.cost, o.items[0].cost + o.items[1].cost + 0.10);
+  const { minimum, recommended, premium } = o.tiers;
+  assert.ok(minimum.price <= recommended.price && recommended.price <= premium.price);
+  assert.ok(minimum.margin >= cfg.minMargin - 1e-9, 'el mínimo respeta el margen mínimo');
+  assert.ok(recommended.price >= o.items[0].tiers.recommended.price + o.items[1].tiers.recommended.price);
+  for (const key of ['minimum', 'recommended', 'premium']) {
+    const tr = o.tiers[key];
+    close(o.split(tr.price).reduce((a, [, v]) => a + v, 0), tr.price + tr.tax);
+  }
+});
+
+test('pedido de un solo modelo ≈ cotización simple', () => {
+  const single = computeQuote({ ...base, quantity: 5, ...orderOpts }, cfg);
+  const order = computeOrder([{ ...base, quantity: 5 }], orderOpts, cfg);
+  assert.ok(Math.abs(order.tiers.recommended.price - single.tiers.recommended.price) <= 1.5);
+  assert.ok(order.tiers.minimum.margin >= cfg.minMargin - 1e-9);
+});
+
+test('pedido mínimo se aplica al pedido, no a cada modelo', () => {
+  const tiny = { ...base, grams: 2, hours: 0.1, complexity: 1 };
+  const one = computeOrder([tiny], { packaging: 'none', shipping: 'pickup', payment: 'cash' }, cfg);
+  assert.equal(one.tiers.recommended.price, cfg.minOrderPrice);
+  const two = computeOrder([tiny, tiny], { packaging: 'none', shipping: 'pickup', payment: 'cash' }, cfg);
+  assert.ok(two.tiers.recommended.price < 2 * cfg.minOrderPrice, 'no se cobra el mínimo dos veces');
+});
+
+test('pedido vacío lanza error', () => {
+  assert.throws(() => computeOrder([], orderOpts, cfg));
 });

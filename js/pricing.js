@@ -87,7 +87,9 @@ export function computeQuote(job, cfg) {
   }
   const suppliesCost = suppliesUnit * qty;
   const pack = (cfg.packaging || {})[job.packaging] || { unit: 0, order: 0 };
-  const packagingCost = pack.unit * qty + pack.order;
+  // En un pedido con varios modelos, el costo por pedido del packaging se cobra una sola vez
+  // (lo suma computeOrder), por eso cada modelo puede omitirlo.
+  const packagingCost = pack.unit * qty + (job.skipOrderCosts ? 0 : pack.order);
   const riskCost = (materialCost + machineCost) * cfg.failureRiskByComplexity[idx];
   // Costo de producir y empacar el pedido (sin entrega ni comisión).
   const cost = materialCost + machineCost + overheadCost + laborCost + extrasCost + suppliesCost + packagingCost + riskCost;
@@ -188,6 +190,103 @@ export function computeQuote(job, cfg) {
         ['material', materialCost], ['machine', machineCost], ['overhead', overheadCost],
         ['risk', riskCost], ['labor', laborCost], ['supplies', extrasCost + suppliesCost],
         ['packaging', packagingCost], ['shipping', shipIncluded], ['fee', tr.fee],
+        ['profit', tr.profit], ['tax', tr.tax],
+      ];
+    },
+  };
+}
+
+/**
+ * Cotización de un pedido con varios modelos. Cada modelo tiene sus propios parámetros
+ * (material, cantidad, acabado, complejidad, impresora, insumos…); el envío, el método de
+ * pago, el ITBMS, el packaging y la urgencia son del pedido completo.
+ *
+ * Cada modelo se cotiza sin envío, sin comisión, sin pedido mínimo y sin el costo por pedido
+ * del packaging. Luego, por nivel (mínimo, recomendado, premium):
+ *   neto   = Σ precio del modelo + packaging por pedido ÷ (1 − margen mínimo)
+ *            (el mínimo nunca baja del pedido mínimo)
+ *   precio = (neto + envío incluido) ÷ (1 − comisión), redondeado hacia arriba
+ * El margen objetivo del pedido es el promedio de los modelos ponderado por costo.
+ *
+ * @param {object[]} jobs   un job por modelo (mismo formato que computeQuote)
+ * @param {object}   order  packaging, shipping, shippingMode, payment, itbms, urgent
+ */
+export function computeOrder(jobs, order, cfg) {
+  if (!jobs.length) throw new Error('El pedido no tiene modelos');
+  const itemCfg = { ...cfg, minOrderPrice: 0 };
+  const quotes = jobs.map((j) => computeQuote({
+    ...j,
+    packaging: order.packaging, urgent: !!order.urgent, skipOrderCosts: true,
+    shipping: null, shippingMode: 'included', payment: null, itbms: false,
+  }, itemCfg));
+
+  const pack = (cfg.packaging || {})[order.packaging] || { unit: 0, order: 0 };
+  const packOrder = jobs.length ? pack.order : 0;
+  const shipEntry = (cfg.shipping || {})[order.shipping];
+  const shipAmount = Math.max(0, (typeof shipEntry === 'number' ? shipEntry : shipEntry?.cost) || 0);
+  const shipIncluded = order.shippingMode === 'separate' ? 0 : shipAmount;
+  const shipSeparate = order.shippingMode === 'separate' ? shipAmount : 0;
+  const feeEntry = (cfg.paymentFees || {})[order.payment];
+  const fee = Math.min(0.5, Math.max(0, (typeof feeEntry === 'number' ? feeEntry : feeEntry?.pct) || 0));
+  const taxRate = order.itbms ? (cfg.itbmsRate || 0) : 0;
+  const step = cfg.roundingStep;
+  const urgency = order.urgent ? cfg.urgencyMultiplier : 1;
+
+  const sum = (f) => quotes.reduce((a, q) => a + f(q), 0);
+  const cost = sum((q) => q.cost) + packOrder;
+  const targetMargin = sum((q) => q.cost) > 0 ? sum((q) => q.cost * q.targetMargin) / sum((q) => q.cost) : quotes[0].targetMargin;
+  const packNet = packOrder / (1 - cfg.minMargin);
+  const minOrderNet = cfg.minOrderPrice * urgency;
+  const gross = (net) => (net + shipIncluded) / (1 - fee);
+
+  const net = (key) => sum((q) => q.tiers[key].price) + packNet;
+  const recommended = roundUp(gross(Math.max(net('recommended'), minOrderNet)), step);
+  let minimum = roundUp(gross(Math.max(net('minimum'), minOrderNet)), step);
+  if (minimum > recommended) minimum = recommended;
+  const premium = Math.max(recommended, roundUp(gross(Math.max(net('premium'), minOrderNet)), step));
+
+  const netOf = (price) => price * (1 - fee) - shipIncluded;
+  const marginOf = (price) => { const n = netOf(price); return n > 0 ? (n - cost) / n : -1; };
+  const units = sum((q) => q.quantity);
+  const tier = (price) => {
+    const tax = price * taxRate;
+    return {
+      price, unit: price / units, margin: marginOf(price), profit: netOf(price) - cost,
+      fee: price * fee, tax, clientTotal: price + tax + shipSeparate,
+      status: marginStatus(marginOf(price), targetMargin, cfg.minMargin),
+    };
+  };
+
+  const bsum = (k) => sum((q) => q.breakdown[k]);
+  const breakdown = {
+    material: bsum('material'), machine: bsum('machine'), overhead: bsum('overhead'), labor: bsum('labor'),
+    extras: bsum('extras'), supplies: bsum('supplies'), packaging: bsum('packaging') + packOrder, risk: bsum('risk'),
+    laborMinutes: bsum('laborMinutes'),
+  };
+
+  const warnings = quotes.flatMap((q, i) => q.warnings.map((w) => ({ ...w, item: i })));
+  return {
+    items: quotes,
+    quantity: units,
+    grams: { total: sum((q) => q.grams.total) },
+    hours: { total: sum((q) => q.hours.total) },
+    breakdown,
+    cost,
+    shipping: { amount: shipAmount, included: shipIncluded, separate: shipSeparate },
+    feePct: fee,
+    taxRate,
+    targetMargin,
+    urgent: !!order.urgent,
+    tiers: { minimum: tier(minimum), recommended: tier(recommended), premium: tier(premium) },
+    goalShare: (netOf(recommended) - cost) / cfg.monthlyProfitGoal,
+    warnings,
+    evaluate(price) { return tier(price); },
+    split(price) {
+      const tr = tier(price);
+      return [
+        ['material', breakdown.material], ['machine', breakdown.machine], ['overhead', breakdown.overhead],
+        ['risk', breakdown.risk], ['labor', breakdown.labor], ['supplies', breakdown.extras + breakdown.supplies],
+        ['packaging', breakdown.packaging], ['shipping', shipIncluded], ['fee', tr.fee],
         ['profit', tr.profit], ['tax', tr.tax],
       ];
     },
