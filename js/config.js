@@ -17,7 +17,26 @@ export const DEFAULT_CONFIG = {
     bedMm: [256, 256, 256],
   },
 
+  // Segunda impresora (H2C). Se elige en "Impresora" cuando está activa.
+  printer2: {
+    id: 'h2c',
+    name: 'Bambu Lab H2C',
+    enabled: true,
+    priceUsd: 2400,           // SUPUESTO: precio de compra (sin módulo láser)
+    lifeHours: 8000,          // SUPUESTO
+    powerKw: 0.25,            // SUPUESTO: cámara más grande y doble boquilla
+    maintenancePerHour: 0.12, // SUPUESTO
+    bedMm: [325, 320, 325],
+  },
+
   electricityPerKwh: 0.25,
+
+  // Gastos fijos del mes (internet, software, web, alquiler, contador). Se reparten entre las
+  // horas de máquina vendibles, igual que la meta mensual.
+  fixedCostsMonthly: 40,     // SUPUESTO
+
+  // ITBMS (Panamá). Se suma al precio cuando se marca "Cobrar ITBMS"; no cuenta como ganancia.
+  itbmsRate: 0.07,
 
   // Mano de obra (preparar, laminar, retirar y limpiar). Pon 0 si tu tiempo cuenta como ganancia.
   laborPerHour: 6,                              // SUPUESTO
@@ -45,6 +64,30 @@ export const DEFAULT_CONFIG = {
   // Alerta de "posible precio fuera de mercado"
   marketMaxPerGram: 0.5,
   marketCheckMinGrams: 30,
+
+  // Packaging: costo por unidad y por pedido de cada opción.
+  packaging: {
+    none:  { unit: 0,    order: 0 },
+    basic: { unit: 0.18, order: 0.10 }, // bolsa + sticker con logo; tarjeta por pedido
+    gift:  { unit: 0.85, order: 0.25 }, // caja kraft + sticker + relleno; tarjeta
+  },
+
+  // Entrega: costo por pedido. Si se cobra "aparte" no entra en el precio ni en el margen.
+  shipping: {
+    pickup:   0,  // retiro en punto de entrega
+    city:     4,  // delivery Ciudad de Panamá (mensajero / app)
+    outer:    7,  // Panamá Oeste / Este
+    interior: 6,  // courier al interior
+  },
+
+  // Comisión por método de pago (fracción del cobro). El precio sube para que la comisión
+  // no se coma el margen.
+  paymentFees: {
+    cash: 0,
+    yappy: 0,
+    transfer: 0,
+    card: 0.045, // SUPUESTO: link de pago con tarjeta
+  },
 
   quantityDiscounts: [
     { minQty: 10, pct: 0.05 },

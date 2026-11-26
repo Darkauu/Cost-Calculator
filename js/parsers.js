@@ -154,6 +154,75 @@ function parseDuration(s) {
   return found ? sec : null;
 }
 
+// ---------- cambios de color y purga (G-code de Bambu Studio) ----------
+const splitList = (v) => (v ? v.split(v.includes(';') ? ';' : ',').map((x) => x.trim().replace(/^"|"$/g, '')) : []);
+
+// Recorre el cuerpo del G-code y cuenta los cambios de filamento del AMS (M620 S<n>A) y la
+// purga de cada cambio: en P2S/H2 la firma el firmware (M620.10 A1 … L<mm>); en X1/P1 son
+// extrusiones entre "; FLUSH_START" y "; FLUSH_END". También suma la torre de purga.
+// Los gramos de purga ya vienen incluidos en el peso total de Bambu Studio: esto solo los separa.
+export function scanToolChanges(text) {
+  const cfgBlock = (re) => re.exec(text.slice(0, 400000))?.[1];
+  const dens = splitList(cfgBlock(/;\s*filament_density\s*[:=]\s*([^\n]+)/)).map(Number);
+  const dias = splitList(cfgBlock(/;\s*filament_diameter\s*[:=]\s*([^\n]+)/)).map(Number);
+  const gPerMm = (i) => { const r = (dias[i] || dias[0] || 1.75) / 2; return Math.PI * r * r / 1000 * (dens[i] || dens[0] || 1.24); };
+
+  let cur = null, chg = null, inFlush = false, feature = '', rel = true, lastE = 0;
+  let changes = 0, purgeG = 0, towerG = 0;
+  const closeChange = () => {
+    if (chg) purgeG += (chg.L > 0 ? chg.L : chg.E) * gPerMm(chg.to);
+    chg = null;
+  };
+  const eOf = (l) => {
+    const m = /\sE(-?\d*\.?\d+)/.exec(l);
+    if (!m) return 0;
+    const e = parseFloat(m[1]);
+    if (rel) return e;
+    const d = e - lastE; lastE = e; return d;
+  };
+  let start = 0;
+  const n = text.length;
+  while (start < n) {
+    let end = text.indexOf('\n', start);
+    if (end < 0) end = n;
+    const l = text.slice(start, end).trim();
+    start = end + 1;
+    if (!l) continue;
+    const c0 = l.charCodeAt(0);
+    if (c0 === 59) { // ';'
+      if (l.startsWith('; FLUSH_START')) inFlush = true;
+      else if (l.startsWith('; FLUSH_END')) inFlush = false;
+      else if (l.startsWith('; FEATURE:')) feature = l.slice(10).trim();
+      continue;
+    }
+    if (c0 === 71) { // 'G'
+      if (l.startsWith('G92')) { const m = /\sE(-?\d*\.?\d+)/.exec(l); if (m) lastE = parseFloat(m[1]); continue; }
+      if (!/^G[123]\s/.test(l) || l.indexOf('E') < 0) continue;
+      const e = eOf(l);
+      if (e <= 0) continue;
+      if (inFlush && chg) chg.E += e;
+      else if (feature === 'Prime tower' && cur != null) towerG += e * gPerMm(cur);
+      continue;
+    }
+    if (c0 === 77) { // 'M'
+      if (/^M83\b/.test(l)) { rel = true; continue; }
+      if (/^M82\b/.test(l)) { rel = false; continue; }
+      const m = /^M620\s+S(\d+)A/.exec(l);
+      if (m) {
+        const id = +m[1];
+        if (id >= 255) continue;
+        closeChange();
+        if (cur != null && id !== cur) { changes++; chg = { to: id, L: 0, E: 0 }; }
+        cur = id;
+        continue;
+      }
+      if (chg && l.startsWith('M620.10 A1')) { const L = /\sL(\d*\.?\d+)/.exec(l); if (L) chg.L = parseFloat(L[1]); }
+    }
+  }
+  closeChange();
+  return { changes, purgeGrams: purgeG + towerG };
+}
+
 // ---------- G-code (Bambu Studio / Orca / Prusa) ----------
 export function parseGcode(text) {
   // Solo se leen encabezado y final, donde los slicers escriben el resumen.
@@ -178,10 +247,13 @@ export function parseGcode(text) {
 
   let grams = null;
   let perFilament = [];
-  const w = /total filament weight \[g\]\s*:\s*([\d.]+)/i.exec(both);
+  const w = /total filament weight \[g\]\s*:\s*([\d.,\s]+)/i.exec(both);
   const used = /filament used \[g\]\s*=\s*([\d.,\s]+)/i.exec(both);
   if (used) perFilament = used[1].split(',').map((x) => parseFloat(x)).filter((x) => Number.isFinite(x));
-  if (w) grams = +w[1];
+  // Bambu Studio escribe un valor por filamento: "total filament weight [g] : 38.02,12.00"
+  const wList = w ? w[1].split(',').map((x) => parseFloat(x)).filter((x) => Number.isFinite(x)) : [];
+  if (!perFilament.length && wList.length > 1) perFilament = wList;
+  if (wList.length) grams = wList.reduce((a, b) => a + b, 0);
   else if (perFilament.length) grams = perFilament.reduce((a, b) => a + b, 0);
 
   const types = (/;\s*filament_type\s*=\s*([^\n]+)/i.exec(both)?.[1] || '').split(';').map((s) => s.trim());
@@ -191,7 +263,8 @@ export function parseGcode(text) {
     : (types[0] ? [{ type: types[0], color: colors[0] || '', grams }] : []);
 
   if (seconds == null || grams == null) throw new Error('No se encontró tiempo/peso en el G-code. Exporta desde Bambu Studio.');
-  return { grams, hours: seconds / 3600, filaments, plates: 1 };
+  const { changes, purgeGrams } = scanToolChanges(text);
+  return { grams, hours: seconds / 3600, filaments, plates: 1, changes, purgeGrams };
 }
 
 // ---------- 3MF ----------
@@ -250,9 +323,17 @@ export function parse3MF(buffer) {
   let sliced = null;
   const sliceXml = read('Metadata/slice_info.config');
   if (sliceXml) sliced = parseSliceInfo(sliceXml);
-  if (!sliced) {
-    const gkey = Object.keys(files).find((k) => /^metadata\/plate_\d+\.gcode$/i.test(k));
-    if (gkey) { try { sliced = parseGcode(strFromU8(files[gkey])); } catch { /* sin datos */ } }
+  const gkeys = Object.keys(files).filter((k) => /^metadata\/plate_\d+\.gcode$/i.test(k));
+  if (!sliced && gkeys.length) {
+    try { sliced = parseGcode(strFromU8(files[gkeys[0]])); } catch { /* sin datos */ }
+  } else if (sliced && gkeys.length) {
+    // Cambios de color y purga: solo están en el G-code de cada placa.
+    let changes = 0, purgeGrams = 0;
+    for (const k of gkeys) {
+      const r = scanToolChanges(strFromU8(files[k]));
+      changes += r.changes; purgeGrams += r.purgeGrams;
+    }
+    sliced = { ...sliced, changes, purgeGrams };
   }
 
   // Geometría

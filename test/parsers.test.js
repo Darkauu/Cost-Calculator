@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { zipSync, strToU8 } from 'fflate';
-import { parseSTL, parseOBJ, parse3MF, parseGcode } from '../js/parsers.js';
+import { parseSTL, parseOBJ, parse3MF, parseGcode, scanToolChanges } from '../js/parsers.js';
 import { analyzeMesh } from '../js/geometry.js';
 import { box, binarySTL, asciiSTL } from './helpers.js';
 
@@ -111,4 +111,91 @@ G28
 
 test('G-code sin resumen lanza error claro', () => {
   assert.throws(() => parseGcode('G28\nG1 X10\n'), /G-code/);
+});
+
+// G-code multicolor como lo exporta Bambu Studio 2.x para la P2S: el firmware hace la purga
+// (M620.10 A1 … L<mm>) y la torre de purga va marcada con "; FEATURE: Prime tower".
+const P2S_GCODE = `; HEADER_BLOCK_START
+; BambuStudio 02.04.00.70
+; model printing time: 1h 12m 30s; total estimated time: 1h 25m 4s
+; total layer number: 40
+; total filament weight [g] : 38.02,12.00
+; HEADER_BLOCK_END
+; CONFIG_BLOCK_START
+; filament_colour = #FFFFFF;#161616
+; filament_density = 1.24,1.24
+; filament_diameter = 1.75,1.75
+; filament_type = PLA;PLA
+; CONFIG_BLOCK_END
+M83
+M620 S0A
+M620.10 A1 F299.339 H0.4 T240 P220 S1
+T0
+M621 S0A
+; FEATURE: Outer wall
+G1 X10 Y10 E1.5
+M620 S1A
+M620.10 A0 F299 L120 H0.4 T240 P220 S1
+M620.10 A1 F299 L120 H0.4 T240 P220 S1
+T1
+;VG1 E120 F100
+M621 S1A
+; FEATURE: Prime tower
+G1 X200 Y200 E10
+G1 X210 Y200 E10
+G1 X210 Y200 E-0.8
+M620 S0A
+M620.10 A1 F299 L150 H0.4 T240 P220 S1
+T0
+M621 S0A
+M620 S1A
+M620.10 A1 F299 L120 H0.4 T240 P220 S1
+T1
+M621 S1A
+M620 S255
+T255
+M621 S255
+`;
+const G_PER_MM = Math.PI * 0.875 * 0.875 / 1000 * 1.24;
+
+test('G-code multicolor de la P2S: suma los filamentos, cuenta cambios y purga', () => {
+  const r = parseGcode(P2S_GCODE);
+  close(r.grams, 50.02);
+  assert.equal(r.filaments.length, 2);
+  close(r.filaments[1].grams, 12);
+  assert.equal(r.filaments[1].color, '#161616');
+  assert.equal(r.changes, 3);
+  close(r.purgeGrams, (120 + 150 + 120 + 20) * G_PER_MM);
+});
+
+test('purga estilo X1/P1: extrusiones entre FLUSH_START y FLUSH_END', () => {
+  const g = `; filament_density: 1.24,1.24
+; filament_diameter: 1.75,1.75
+M83
+M620 S0A
+T0
+G1 X1 E3
+M620 S1A
+G92 E0
+; FLUSH_START
+G1 E23.7 F300
+G1 E10 F50
+; FLUSH_END
+G1 E-2 F1800
+G1 E2 F300
+M621 S1A
+`;
+  const r = scanToolChanges(g);
+  assert.equal(r.changes, 1);
+  close(r.purgeGrams, 33.7 * G_PER_MM);
+});
+
+test('.gcode.3mf: slice_info para tiempo/peso y G-code de la placa para cambios de color', () => {
+  const slice = `<config><plate><metadata key="index" value="1"/><metadata key="prediction" value="5104"/><metadata key="weight" value="50.02"/>
+    <filament id="1" type="PLA" color="#FFFFFF" used_g="38.02"/><filament id="2" type="PLA" color="#161616" used_g="12.00"/></plate></config>`;
+  const zip = zipSync({ 'Metadata/slice_info.config': strToU8(slice), 'Metadata/plate_1.gcode': strToU8(P2S_GCODE) });
+  const r = parse3MF(zip.buffer);
+  close(r.sliced.grams, 50.02);
+  assert.equal(r.sliced.changes, 3);
+  assert.ok(r.sliced.purgeGrams > 1);
 });

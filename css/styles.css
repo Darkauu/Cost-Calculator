@@ -125,6 +125,9 @@ h2 { font-size: 1rem; margin: 0 0 .75rem; }
 /* formulario */
 .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .opts .full { grid-column: 1 / -1; }
+.opts label.check { display: flex; align-items: center; gap: 8px; }
+.opts label.check > span { margin: 0; color: var(--text); font-size: .9rem; }
+.tier .total { font-size: .8rem; color: var(--text); font-variant-numeric: tabular-nums; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 label > span, legend { display: block; font-size: .82rem; color: var(--muted); margin-bottom: 4px; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
