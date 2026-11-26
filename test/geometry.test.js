@@ -34,6 +34,23 @@ test('pieza en T (voladizo) detecta área y volumen de soporte', () => {
   assert.ok(a.complexity.level >= 2);
 });
 
+test('pieza plana con chaflán inferior: sin voladizos y complejidad 1', () => {
+  // placa 60×40×3 mm con un escalón de 0.8 mm en el borde inferior (como un chaflán)
+  const a = analyzeMesh(concat(box(58, 38, 0.8, 1, 1, 0).positions, box(60, 40, 2.2, 0, 0, 0.8).positions));
+  assert.equal(a.overhangAreaMm2, 0);   // (dos cajas superpuestas: el área no sirve para la complejidad)
+  const thin = analyzeMesh(box(80, 50, 2).positions);
+  assert.equal(thin.complexity.level, 1, 'una placa delgada no es compleja');
+});
+
+test('malla invertida: las caras de arriba no cuentan como voladizo', () => {
+  const p = box(60, 40, 3).positions;
+  const inv = new Float32Array(p.length);
+  for (let t = 0; t < p.length; t += 9) { inv.set(p.subarray(t, t + 3), t); inv.set(p.subarray(t + 6, t + 9), t + 3); inv.set(p.subarray(t + 3, t + 6), t + 6); }
+  const a = analyzeMesh(inv);
+  assert.equal(a.overhangAreaMm2, 0);
+  assert.equal(a.complexity.level, 1);
+});
+
 test('la complejidad sube con detalle, voladizos y esbeltez', () => {
   const simple = scoreComplexity({ volume: 8000, area: 2400, overhangArea: 0, size: [20, 20, 20] });
   const hard = scoreComplexity({ volume: 1000, area: 6000, overhangArea: 1500, size: [10, 10, 60] });

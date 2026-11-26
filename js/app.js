@@ -256,16 +256,24 @@ function renderAnalysis(job) {
   $('stats').innerHTML = rows.map(([k, v, raw]) => `<div><dt>${esc(k)}</dt><dd>${raw ? v : esc(v)}</dd></div>`).join('');
 
   const level = job?.complexity ?? a?.complexity.level ?? 2;
+  const proposed = a?.complexity.level;
+  const manual = $('complexity').value !== 'auto';
   let reason = '';
-  if (a && $('complexity').value === 'auto') {
+  if (a) {
     const f = a.complexity.factors;
     const names = Object.entries(f).filter(([, v]) => v > 0).sort((p, q) => q[1] - p[1]).map(([k]) => t(`factor_${k}`));
     reason = names.length ? `${t('complexityBecause')}: ${names.join(', ')}` : t('complexityPlain');
+    if (manual) reason = `${t('complexityProposed', { n: proposed })} · ${reason}`;
   }
+  // Puntos clicables: el sistema propone, el vendedor decide (clic en el nivel o en "Auto").
   $('complexityBox').innerHTML = `
-    <strong>${t('complexity')}: ${level} · ${t(`level_${level}`)}</strong>
-    <span class="dots">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= level ? 'on' : ''}"></i>`).join('')}</span>
+    <strong>${t('complexity')}: ${level} · ${t(`level_${level}`)}${manual ? ` <span class="badge">${t('complexityManual')}</span>` : ''}</strong>
+    <span class="dots pick" role="group" aria-label="${esc(t('complexity'))}">${[1, 2, 3, 4, 5].map((i) =>
+      `<button type="button" data-level="${i}" class="${i <= level ? 'on' : ''}" title="${i} · ${esc(t(`level_${i}`))}" aria-pressed="${i === level}"></button>`).join('')}
+      ${manual ? `<button type="button" class="auto" data-level="auto">${t('complexityAuto')}${proposed ? ` (${proposed})` : ''}</button>` : ''}</span>
     ${reason ? `<span class="muted small">${esc(reason)}</span>` : ''}`;
+  const autoOpt = $('complexity').options[0];
+  autoOpt.textContent = t('complexityAuto') + (proposed ? ` (${proposed})` : '');
 }
 
 function renderQuote(q) {
@@ -871,6 +879,12 @@ async function init() {
   $('opts').addEventListener('change', onItem);
   $('manual').addEventListener('input', onItem);
   $('manual').addEventListener('toggle', onItem);
+  $('complexityBox').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-level]');
+    if (!b) return;
+    $('complexity').value = b.dataset.level;
+    onItem();
+  });
   $('orderOpts').addEventListener('input', recompute);
   $('orderOpts').addEventListener('change', recompute);
   $('addModel').addEventListener('click', addItem);

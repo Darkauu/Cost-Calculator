@@ -16,18 +16,28 @@ export function analyzeMesh(positions, opts = {}) {
     if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
   }
 
-  let volume = 0, area = 0, overhangArea = 0, supportVolume = 0;
+  // Volumen con signo (teorema de la divergencia). Si sale negativo, la malla tiene las normales
+  // hacia adentro: se voltean para no confundir las caras de arriba con voladizos.
+  let volume = 0;
+  for (let o = 0; o < triCount * 9; o += 9) {
+    const ax = positions[o], ay = positions[o + 1], az = positions[o + 2];
+    const bx = positions[o + 3], by = positions[o + 4], bz = positions[o + 5];
+    const cx = positions[o + 6], cy = positions[o + 7], cz = positions[o + 8];
+    volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+  }
+  const flip = volume < 0 ? -1 : 1;
+
+  let area = 0, overhangArea = 0, supportVolume = 0;
   const overhangMask = new Uint8Array(triCount);
-  const bedTolerance = 0.5;
+  // Las caras hacia abajo a menos de 1 mm de la cama (chaflanes, redondeos del borde inferior,
+  // primeras capas) se imprimen sin soporte.
+  const bedTolerance = 1;
 
   for (let t = 0; t < triCount; t++) {
     const o = t * 9;
     const ax = positions[o], ay = positions[o + 1], az = positions[o + 2];
     const bx = positions[o + 3], by = positions[o + 4], bz = positions[o + 5];
     const cx = positions[o + 6], cy = positions[o + 7], cz = positions[o + 8];
-
-    // volumen con signo (teorema de la divergencia)
-    volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
 
     const ux = bx - ax, uy = by - ay, uz = bz - az;
     const vx = cx - ax, vy = cy - ay, vz = cz - az;
@@ -37,7 +47,7 @@ export function analyzeMesh(positions, opts = {}) {
     const triArea = len / 2;
     area += triArea;
 
-    const nzUnit = nz / len;
+    const nzUnit = flip * nz / len;
     const centroidZ = (az + bz + cz) / 3;
     const heightAboveBed = centroidZ - minZ;
     if (nzUnit < overhangNz && heightAboveBed > bedTolerance) {
@@ -75,9 +85,13 @@ function step(value, thresholds, points) {
 export function scoreComplexity({ volume, area, overhangArea, size }) {
   if (!volume || !area) return { level: 1, factors: { detail: 0, overhang: 0, slenderness: 0 }, total: 0 };
 
-  // Detalle: superficie respecto al volumen (esfera ≈ 4.8, cubo = 6; piezas finas o detalladas ≫ 10)
-  const shapeFactor = area / Math.pow(volume, 2 / 3);
-  const detail = step(shapeFactor, [7, 10, 15, 25], [0, 0.5, 1, 1.5, 2]);
+  // Detalle: superficie de la pieza respecto a la de su caja envolvente (caja o placa plana = 1,
+  // esfera ≈ 0.5; nervios, agujeros, texto y relieves la suben). No castiga las piezas planas o
+  // delgadas, que son fáciles de imprimir.
+  const [sx, sy, sz] = size;
+  const boxArea = 2 * (sx * sy + sy * sz + sx * sz);
+  const shapeFactor = boxArea > 0 ? area / boxArea : 1;
+  const detail = step(shapeFactor, [1.15, 1.5, 2, 3], [0, 0.5, 1, 1.5, 2]);
 
   // Voladizos: porcentaje de la superficie que necesita soporte
   const overhangRatio = overhangArea / area;
