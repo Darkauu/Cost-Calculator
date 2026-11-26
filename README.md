@@ -9,15 +9,16 @@ Es una página estática: no tiene servidor ni instalación, y el archivo del cl
 1. Arrastra el archivo: **STL, 3MF, OBJ o G-code**.
    - **Precio exacto:** en Bambu Studio, lamina y usa *Exportar → Exportar archivo de placa laminada* (`.gcode.3mf`), o guarda el proyecto ya laminado. Se leen el tiempo, los gramos, el material y los colores reales. Si hay más de un filamento, se marca *Multicolor* automáticamente.
    - **Precio estimado:** con un STL/OBJ/3MF sin laminar se calcula volumen, superficie, voladizos (soportes) y complejidad, y a partir de eso se estiman el peso y el tiempo.
-   - **Sin archivo:** "Ingresar peso y tiempo a mano".
+   - **Sin archivo:** "Ingresar peso y tiempo a mano": gramos y el tiempo en tres casillas **h · m · s** (en 0 por defecto), tal como lo muestra Bambu Studio.
    - Del G-code de cada placa también se leen los **cambios de color** del AMS y los gramos de **purga y torre** (ya vienen incluidos en el peso de Bambu Studio; se muestran para ver cuánto cuesta el multicolor).
-2. Elige material, cantidad, calidad, acabado (Ninguno · Lijado · Pintado · Multicolor) y entrega (Normal · Urgente).
+2. Elige material, cantidad, acabado (Ninguno · Lijado · Pintado · Multicolor) y entrega (Normal · Urgente). Impresora, calidad, complejidad y "otro insumo" están en **Opciones avanzadas**.
    - **Piezas en el archivo:** si la placa trae varias piezas iguales (ej. 12 llaveros), pon cuántas: el tiempo y los gramos se reparten entre ellas.
    - **Impresora:** P2S o H2C, cada una con su costo por hora.
-   - **Packaging** (Sin · Básico · Regalo), **insumos extra por unidad** (argollas, imanes), **envío** (incluido en el precio o cobrado aparte), **método de pago** (la comisión de tarjeta se cubre subiendo el precio) y **ITBMS 7 %** (se suma al final y no cuenta como ganancia).
+   - **Packaging** (Sin · Básico · Regalo), **insumos por unidad** (marca cuántas argollas, imanes, tornillos… lleva cada pieza), **envío** (incluido en el precio o cobrado aparte), **método de pago** (la comisión de tarjeta se cubre subiendo el precio) y **ITBMS 7 %** (se suma al final y no cuenta como ganancia).
 3. Cotiza el precio **Recomendado**. Si el cliente negocia, escribe el precio en "Precio negociado" para ver el semáforo:
    - 🟢 margen saludable · 🟡 margen bajo · 🔴 requiere aprobación (por debajo del margen mínimo).
-4. Usa "Copiar cotización" para WhatsApp o correo, o "Imprimir / PDF".
+4. **Desglose del precio:** debajo de los precios se ve en qué se va cada dólar (filamento, máquina, gastos fijos, riesgo, mano de obra, insumos, packaging, envío, comisión, ganancia e ITBMS) con barras y el margen. Se puede ver para el mínimo, el recomendado, el premium o el precio negociado.
+5. Usa "Copiar cotización" para WhatsApp o correo, o "Imprimir / PDF".
 
 En el visor 3D, las caras en naranja necesitan soporte.
 
@@ -28,7 +29,7 @@ Material   = gramos × costo/kg × (1 + 5 % de desperdicio)
 Máquina    = horas × (precio impresora ÷ vida útil + kW × USD/kWh + mantenimiento)   ← según P2S o H2C
 Gastos fijos = horas × (gastos fijos del mes ÷ horas vendibles al mes)
 Mano obra  = (preparación por pedido + postproceso por unidad según complejidad + acabado) × USD/h
-Insumos    = acabado + insumos extra por unidad
+Insumos    = acabado + Σ (insumo del catálogo × cantidad por unidad) + otro insumo por unidad
 Packaging  = costo por unidad × cantidad + costo por pedido
 Riesgo     = (material + máquina) × % de falla según complejidad
 Costo      = suma de todo lo anterior
@@ -66,7 +67,9 @@ Botón **Administración** → PIN (por defecto **`1234`**, cámbialo en el mism
 
 Ahí se editan las dos impresoras, la electricidad, los gastos fijos, el ITBMS, el packaging, los costos de envío, las comisiones de pago, la mano de obra, la meta mensual, los márgenes, los costos por kg de cada material y la calibración. Los cambios se guardan en ese navegador. **Para que todo el equipo use los mismos valores**, pulsa *Exportar config.json* y sube ese archivo a la raíz del repositorio. La app lo carga automáticamente.
 
-Con el panel desbloqueado se ve además el **desglose de costos** de cada cotización.
+Las listas de **filamentos, insumos, packaging, envíos y métodos de pago** se editan como tablas: *Agregar* crea una fila nueva y ✕ la quita.
+
+Con el panel desbloqueado se ve además el detalle de tarifas (costo por hora, minutos de mano de obra) de cada cotización.
 
 > El PIN evita cambios accidentales, pero en una página estática no oculta los costos a alguien con conocimientos técnicos.
 

@@ -16,6 +16,13 @@ export function selectPrinter(cfg, id) {
   return cfg.printer;
 }
 
+// Tiempo en tres casillas (h, m, s), como lo muestra Bambu Studio → horas decimales.
+// Vacíos o negativos cuentan como 0; minutos y segundos pueden pasar de 59.
+export function hmsToHours(h, m, s) {
+  const v = (x) => Math.max(0, parseFloat(x) || 0);
+  return v(h) + v(m) / 60 + v(s) / 3600;
+}
+
 export function quantityDiscount(qty, tiers = []) {
   let pct = 0;
   for (const t of tiers) if (qty >= t.minQty && t.pct > pct) pct = t.pct;
@@ -72,17 +79,25 @@ export function computeQuote(job, cfg) {
   const laborMinutes = cfg.setupMinutes + (cfg.postMinutesByComplexity[idx] + finish.extraMinutes) * qty;
   const laborCost = (laborMinutes / 60) * cfg.laborPerHour;
   const extrasCost = finish.extraCost * qty;
-  const suppliesCost = Math.max(0, job.suppliesPerUnit || 0) * qty;
+  // Insumos: los del catálogo (cantidad por unidad) más un monto libre por unidad.
+  let suppliesUnit = Math.max(0, job.suppliesPerUnit || 0);
+  for (const [id, n] of Object.entries(job.supplies || {})) {
+    const s = (cfg.supplies || {})[id];
+    if (s && n > 0) suppliesUnit += s.cost * n;
+  }
+  const suppliesCost = suppliesUnit * qty;
   const pack = (cfg.packaging || {})[job.packaging] || { unit: 0, order: 0 };
   const packagingCost = pack.unit * qty + pack.order;
   const riskCost = (materialCost + machineCost) * cfg.failureRiskByComplexity[idx];
   // Costo de producir y empacar el pedido (sin entrega ni comisión).
   const cost = materialCost + machineCost + overheadCost + laborCost + extrasCost + suppliesCost + packagingCost + riskCost;
 
-  const shipAmount = Math.max(0, (cfg.shipping || {})[job.shipping] || 0);
+  const shipEntry = (cfg.shipping || {})[job.shipping];
+  const shipAmount = Math.max(0, (typeof shipEntry === 'number' ? shipEntry : shipEntry?.cost) || 0);
   const shipIncluded = job.shippingMode === 'separate' ? 0 : shipAmount;
   const shipSeparate = job.shippingMode === 'separate' ? shipAmount : 0;
-  const fee = Math.min(0.5, Math.max(0, (cfg.paymentFees || {})[job.payment] || 0));
+  const feeEntry = (cfg.paymentFees || {})[job.payment];
+  const fee = Math.min(0.5, Math.max(0, (typeof feeEntry === 'number' ? feeEntry : feeEntry?.pct) || 0));
 
   // Ganancia: lo mayor entre el margen objetivo y lo que la meta mensual exige por hora de máquina.
   const targetMargin = cfg.marginByComplexity[idx];
@@ -165,5 +180,16 @@ export function computeQuote(job, cfg) {
     goalShare: (netOf(recommended) - cost) / cfg.monthlyProfitGoal,
     warnings,
     evaluate(price) { return tier(price); },
+    // Reparto de un precio en partes (para el desglose con barras). La suma de las partes es
+    // el precio + ITBMS; si el precio no cubre el costo, la ganancia sale negativa.
+    split(price) {
+      const tr = tier(price);
+      return [
+        ['material', materialCost], ['machine', machineCost], ['overhead', overheadCost],
+        ['risk', riskCost], ['labor', laborCost], ['supplies', extrasCost + suppliesCost],
+        ['packaging', packagingCost], ['shipping', shipIncluded], ['fee', tr.fee],
+        ['profit', tr.profit], ['tax', tr.tax],
+      ];
+    },
   };
 }

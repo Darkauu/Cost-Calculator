@@ -65,28 +65,37 @@ export const DEFAULT_CONFIG = {
   marketMaxPerGram: 0.5,
   marketCheckMinGrams: 30,
 
+  // Listas editables desde Administración (se pueden agregar y quitar elementos).
   // Packaging: costo por unidad y por pedido de cada opción.
   packaging: {
-    none:  { unit: 0,    order: 0 },
-    basic: { unit: 0.18, order: 0.10 }, // bolsa + sticker con logo; tarjeta por pedido
-    gift:  { unit: 0.85, order: 0.25 }, // caja kraft + sticker + relleno; tarjeta
+    none:  { name: 'Sin packaging',            unit: 0,    order: 0 },
+    basic: { name: 'Básico (bolsa + sticker)', unit: 0.18, order: 0.10 }, // tarjeta por pedido
+    gift:  { name: 'Regalo (caja kraft)',      unit: 0.85, order: 0.25 }, // caja + relleno; tarjeta
   },
 
-  // Entrega: costo por pedido. Si se cobra "aparte" no entra en el precio ni en el margen.
+  // Envío: costo por pedido. Si se cobra "aparte" no entra en el precio ni en el margen.
   shipping: {
-    pickup:   0,  // retiro en punto de entrega
-    city:     4,  // delivery Ciudad de Panamá (mensajero / app)
-    outer:    7,  // Panamá Oeste / Este
-    interior: 6,  // courier al interior
+    pickup:   { name: 'Retiro en punto',              cost: 0 },
+    city:     { name: 'Delivery Ciudad de Panamá',    cost: 4 },
+    outer:    { name: 'Delivery Panamá Oeste / Este', cost: 7 },
+    interior: { name: 'Courier al interior',          cost: 6 },
   },
 
   // Comisión por método de pago (fracción del cobro). El precio sube para que la comisión
   // no se coma el margen.
   paymentFees: {
-    cash: 0,
-    yappy: 0,
-    transfer: 0,
-    card: 0.045, // SUPUESTO: link de pago con tarjeta
+    cash:     { name: 'Efectivo',               pct: 0 },
+    yappy:    { name: 'Yappy',                  pct: 0 },
+    transfer: { name: 'Transferencia / ACH',    pct: 0 },
+    card:     { name: 'Tarjeta (link de pago)', pct: 0.045 }, // SUPUESTO
+  },
+
+  // Insumos / consumibles que se agregan por unidad (el vendedor marca cuántos lleva cada pieza).
+  supplies: {
+    ring:   { name: 'Argolla de llavero',      cost: 0.12 }, // SUPUESTO
+    magnet: { name: 'Imán de neodimio 10 mm',  cost: 0.15 }, // SUPUESTO
+    screw:  { name: 'Tornillo / inserto M3',   cost: 0.05 }, // SUPUESTO
+    glue:   { name: 'Pegamento / pintura',     cost: 0.20 }, // SUPUESTO
   },
 
   quantityDiscounts: [
@@ -148,7 +157,23 @@ export function mergeConfig(base, override) {
   if (!isObject(override)) return structuredClone(base);
   const out = structuredClone(base);
   for (const [k, v] of Object.entries(override)) {
+    if (LIST_KEYS.includes(k) && isObject(v)) { out[k] = normalizeList(k, v); continue; }
     out[k] = isObject(v) && isObject(out[k]) ? mergeConfig(out[k], v) : structuredClone(v);
+  }
+  return out;
+}
+
+// Listas que el administrador edita completas: reemplazan a las de por defecto (así un
+// elemento borrado no reaparece). Acepta el formato anterior (número suelto) de shipping y
+// paymentFees.
+export const LIST_KEYS = ['materials', 'packaging', 'shipping', 'paymentFees', 'supplies'];
+function normalizeList(key, list) {
+  const out = {};
+  for (const [id, v] of Object.entries(list)) {
+    const def = DEFAULT_CONFIG[key]?.[id];
+    if (key === 'shipping' && typeof v === 'number') out[id] = { name: def?.name || id, cost: v };
+    else if (key === 'paymentFees' && typeof v === 'number') out[id] = { name: def?.name || id, pct: v };
+    else if (isObject(v)) out[id] = { ...(def ? { name: def.name } : {}), ...structuredClone(v) };
   }
   return out;
 }
