@@ -3,6 +3,8 @@ import { t, getLang, setLang, applyI18n } from './i18n.js';
 import { analyzeMesh, estimatePrint, fitsBed } from './geometry.js';
 import { computeOrder, machineRatePerHour, selectPrinter, hmsToHours } from './pricing.js';
 import { parseFile } from './parsers.js';
+import * as cloud from './cloud.js';
+import { quoteRecord, summarize, monthKey } from './records.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -157,6 +159,7 @@ function recompute() {
   state.entries = state.items.map((item, i) => ({ item, i, job: jobFor(item) })).filter((e) => e.job);
   const activeJob = it ? jobFor(it) : null;
   state.quoteNo = null; // la cotización cambió: el próximo PDF lleva número nuevo
+  $('saveStatus').hidden = true;
   state.quote = state.entries.length ? computeOrder(state.entries.map((e) => e.job), orderOptions(), state.cfg) : null;
   renderModels();
   renderAnalysis(activeJob);
@@ -554,6 +557,8 @@ const payTotal = (g) => money(g.tier.clientTotal) + (g.tier.tax ? ` ${t('q_withT
 function quoteText() {
   const d = clientDoc();
   const lines = [pdfTitle(), ''];
+  const client = $('clientName').value.trim();
+  if (client) lines.push(`${t('clientName')}: ${client}`, '');
   for (const l of d.items) {
     lines.push(
       `${t('quoteItem')}: ${l.name}`,
@@ -582,7 +587,7 @@ function buildPrintSheet() {
   const extra = (label, v) => (v > 0.004 ? `<tr><td colspan="5">${label}</td><td class="num">${money(v)}</td></tr>` : '');
   $('printSheet').innerHTML = `
     <h1>${esc(pdfTitle())}</h1>
-    <div>${new Date().toLocaleDateString(locale())}</div>
+    <div>${new Date().toLocaleDateString(locale())}${$('clientName').value.trim() ? ` · ${t('clientName')}: ${esc($('clientName').value.trim())}` : ''}</div>
     ${img}
     <table>
       <tr><th>${t('quoteItem')}</th><th>${t('material')}</th><th>${t('finish')}</th><th class="num">${t('quantity')}</th><th class="num">${t('perUnit')}</th><th class="num">${t('quoteTotal')}</th></tr>
@@ -598,6 +603,151 @@ function buildPrintSheet() {
     </table>
     <p>${t('urgency')}: ${t(d.urgent ? 'urgency_urgent' : 'urgency_normal')}</p>
     <p>${t('quoteValid')}</p>`;
+}
+
+// ---------- historial en la nube ----------
+// Acepta el JSON o el bloque `const firebaseConfig = { apiKey: "…", … };` tal como lo da Firebase.
+function parseFirebaseConfig(text) {
+  const src = String(text || '').trim();
+  if (!src) return null;
+  const m = /\{[\s\S]*\}/.exec(src);
+  if (!m) throw new Error(t('cloudBadConfig'));
+  let obj;
+  try { obj = JSON.parse(m[0]); } catch {
+    const json = m[0].replace(/\/\/.*$/gm, '').replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
+      .replace(/'([^']*)'/g, '"$1"').replace(/,\s*}/g, '}');
+    try { obj = JSON.parse(json); } catch { throw new Error(t('cloudBadConfig')); }
+  }
+  if (!obj.apiKey || !obj.projectId) throw new Error(t('cloudBadConfig'));
+  return obj;
+}
+
+function setupCloud() {
+  const show = (id, on) => $(id).classList.toggle('hidden', !on);
+  if (!state.cfg.firebase) return;
+  cloud.initCloud(state.cfg.firebase, ({ user, member, error }) => {
+    state.member = member;
+    show('loginBtn', !user);
+    show('userChip', !!user);
+    show('historyBtn', !!member);
+    $('saveBtn').classList.toggle('hidden', !member);
+    $('userName').textContent = member ? member.name : (user?.email || '');
+    if (error === 'notMember') toast(t('notMember', { email: user.email }));
+  }).catch((e) => { console.error(e); toast(t('cloudError')); });
+  $('loginBtn').addEventListener('click', () => cloud.signIn().catch((e) => { console.error(e); toast(t('cloudError')); }));
+  $('logoutBtn').addEventListener('click', () => cloud.signOutCloud());
+}
+
+// Guarda la cotización actual una sola vez por número (copiar, imprimir o el botón Guardar).
+async function saveCurrent({ silent = false } = {}) {
+  if (!state.member || !state.quote) return null;
+  if (state.savedNo && state.savedNo === state.quoteNo) return state.savedNo;
+  const doc = clientDoc();
+  const quote = state.quote;
+  const user = state.member;
+  const client = { name: $('clientName').value, contact: $('clientContact').value };
+  const negotiated = parseFloat($('negotiated').value) || null;
+  const number = state.quoteNo || (state.quoteNo = newQuoteNumber());
+  try {
+    const saved = await cloud.saveQuote({ number, make: (n) => quoteRecord({ number: n, doc, quote, user, client, negotiated }) }, newQuoteNumber);
+    state.quoteNo = saved;
+    state.savedNo = saved;
+    $('saveStatus').hidden = false;
+    $('saveStatus').textContent = t('savedAs', { no: saved });
+    if (!silent) toast(t('savedAs', { no: saved }));
+    return saved;
+  } catch (e) {
+    console.error(e);
+    toast(t('saveError'));
+    return null;
+  }
+}
+
+const statusPill = (st) => `<span class="pill st-${st}">${t(`st_${st}`)}</span>`;
+
+function renderHistory() {
+  const { rows, privs } = state.hist || { rows: [], privs: null };
+  const st = $('histStatus').value;
+  const q = $('histSearch').value.trim().toLowerCase();
+  const list = rows.filter((r) => (st === 'all' || r.status === st)
+    && (!q || [r.number, r.client?.name, r.createdBy?.name].join(' ').toLowerCase().includes(q)));
+  const s = summarize(rows, privs);
+  const goal = state.cfg.monthlyProfitGoal;
+  const card = (label, value, sub = '') => `<div class="hs"><span class="muted small">${label}</span><b>${value}</b>${sub ? `<span class="muted small">${sub}</span>` : ''}</div>`;
+  $('histSummary').innerHTML = [
+    card(t('hs_quotes'), s.count, t('hs_open', { n: s.open })),
+    card(t('hs_po'), s.po, s.conversion != null ? t('hs_conversion', { pct: pct(s.conversion) }) : ''),
+    card(t('hs_sales'), money(s.sales), s.discountVsRecommended ? t('hs_discount', { pct: pct(s.discountVsRecommended) }) : ''),
+    s.profit != null ? card(t('hs_profit'), money(s.profit), t('hs_goal', { pct: pct(s.profit / goal), goal: money(goal) })) : '',
+  ].join('');
+  $('histEmpty').hidden = list.length > 0;
+  $('histBody').innerHTML = list.map((r) => {
+    let act;
+    if (state.editing === r.number) {
+      const def = r.prices.negotiated ?? r.prices.recommended;
+      act = `<span class="po-edit"><input type="number" step="0.5" min="0" value="${def}" data-final aria-label="${esc(t('h_final'))}">
+        <input type="date" value="${new Date().toISOString().slice(0, 10)}" data-podate aria-label="${esc(t('h_poDate'))}">
+        <button type="button" class="btn small primary" data-act="confirm" data-no="${r.number}">✓</button>
+        <button type="button" class="btn small" data-act="cancel">✕</button></span>`;
+    } else if (r.status === 'quoted') {
+      act = `<button type="button" class="btn small" data-act="po" data-no="${r.number}">${t('act_po')}</button>
+        <button type="button" class="btn small ghost" data-act="lost" data-no="${r.number}">${t('act_lost')}</button>`;
+    } else {
+      act = `<button type="button" class="btn small ghost" data-act="reopen" data-no="${r.number}">${t('act_reopen')}</button>`;
+    }
+    const items = r.items.map((i) => `${i.quantity}× ${i.name}`).join(', ');
+    return `<tr>
+      <td><b>#${esc(r.number)}</b><br><span class="muted small">${esc(r.day)}</span></td>
+      <td>${esc(r.client?.name || '—')}<br><span class="muted small">${esc(items)}</span></td>
+      <td>${esc(r.createdBy?.name || '')}</td>
+      <td class="num">${money(r.prices.recommended)}</td>
+      <td>${statusPill(r.status)}${r.poDate ? `<br><span class="muted small">${esc(r.poDate)}</span>` : ''}</td>
+      <td class="num">${r.finalPrice != null ? money(r.finalPrice) : '—'}</td>
+      <td class="hist-act">${act}</td></tr>`;
+  }).join('');
+}
+
+async function loadHistory() {
+  $('histBody').innerHTML = `<tr><td colspan="7" class="muted">${t('loading')}</td></tr>`;
+  try { state.hist = await cloud.listQuotes($('histMonth').value || monthKey()); } catch (e) {
+    console.error(e); toast(t('cloudError')); state.hist = { rows: [], privs: null };
+  }
+  renderHistory();
+}
+
+function setupHistory() {
+  $('historyBtn').addEventListener('click', () => {
+    if (!$('histMonth').value) $('histMonth').value = monthKey();
+    state.editing = null;
+    $('historyDialog').showModal();
+    loadHistory();
+  });
+  $('closeHistory').addEventListener('click', () => $('historyDialog').close());
+  $('histMonth').addEventListener('change', loadHistory);
+  $('histStatus').addEventListener('change', renderHistory);
+  $('histSearch').addEventListener('input', renderHistory);
+  $('histBody').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const act = b.dataset.act;
+    const row = state.hist.rows.find((r) => r.number === b.dataset.no);
+    if (act === 'po') { state.editing = row.number; renderHistory(); return; }
+    if (act === 'cancel') { state.editing = null; renderHistory(); return; }
+    let patch;
+    if (act === 'confirm') {
+      const tr = b.closest('tr');
+      const finalPrice = parseFloat(tr.querySelector('[data-final]').value);
+      if (!(finalPrice >= 0)) { toast(t('h_final')); return; }
+      patch = { status: 'po', finalPrice, poDate: tr.querySelector('[data-podate]').value || null };
+    } else if (act === 'lost') patch = { status: 'lost', finalPrice: null, poDate: null };
+    else if (act === 'reopen') patch = { status: 'quoted', finalPrice: null, poDate: null };
+    try {
+      await cloud.setStatus(row.number, patch.status, patch);
+      Object.assign(row, patch);
+      state.editing = null;
+      renderHistory();
+    } catch (err) { console.error(err); toast(t('saveError')); }
+  });
 }
 
 // ---------- administración ----------
@@ -700,6 +850,7 @@ const ICONS = {
   packaging: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
   shipping: '<path d="M3 6h11v10H3zM14 9h4l3 3v4h-7"/><circle cx="7" cy="17.5" r="1.5"/><circle cx="17" cy="17.5" r="1.5"/>',
   payments: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M7 15h3"/>',
+  cloud: '<path d="M7 18a4 4 0 01-.6-7.96A6 6 0 0118 9a4.5 4.5 0 01-.5 9z"/>',
   security: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
 };
 const icon = (k) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
@@ -714,6 +865,7 @@ const ADMIN_TABS = [
   { id: 'packaging', icon: 'packaging', title: 'tab_packaging', lists: ['packaging'] },
   { id: 'shipping', icon: 'shipping', title: 'tab_shipping', lists: ['shipping'] },
   { id: 'payments', icon: 'payments', title: 'tab_payments', lists: ['paymentFees'] },
+  { id: 'cloud', icon: 'cloud', title: 'tab_cloud', cloud: true },
   { id: 'security', icon: 'security', title: 'tab_security', extra: true },
 ];
 
@@ -749,6 +901,11 @@ function renderAdmin() {
     let body = '';
     for (const sec of tb.secs || []) body += adminSection(sec, ADMIN_SECTIONS.find(([k]) => k === sec)[1], cfg);
     for (const key of tb.lists || []) body += listEditor(ADMIN_LISTS.find((x) => x.key === key), cfg[key] || {});
+    if (tb.cloud) {
+      body += `<div class="admin-sec"><h3>Firebase</h3><p class="muted small">${t('cloudHelp')}</p>
+        <textarea id="cloudCfg" spellcheck="false" placeholder="const firebaseConfig = { apiKey: '…', authDomain: '…', projectId: '…', … }">${cfg.firebase ? esc(JSON.stringify(cfg.firebase, null, 2)) : ''}</textarea>
+        <p class="muted small">${t(cloud.isReady() ? 'cloudOn' : 'cloudOff')}</p></div>`;
+    }
     if (tb.extra) {
       body += `<div class="admin-sec"><h3>PIN</h3><div class="admin-grid"><label><span>${t('newPin')}</span><input type="password" id="newPin" autocomplete="new-password"></label></div></div>`;
       body += `<details class="admin-sec"><summary>${t('sec_advanced')}</summary><textarea id="rawCfg" spellcheck="false">${esc(JSON.stringify(cfg, null, 2))}</textarea></details>`;
@@ -786,6 +943,8 @@ async function collectAdmin() {
       else setPath(cfg, el.dataset.path, v);
     }
     collectLists(cfg);
+    const cc = $('cloudCfg');
+    if (cc) cfg.firebase = parseFirebaseConfig(cc.value);
   }
   const pin = $('newPin')?.value;
   if (pin) cfg.adminPinHash = await sha256(pin);
@@ -952,8 +1111,10 @@ async function init() {
     renderSupplies(cur().form.supplies);
     recompute();
   });
-  $('orderOpts').addEventListener('input', recompute);
-  $('orderOpts').addEventListener('change', recompute);
+  // Los datos del cliente no cambian el precio (ni el número de cotización ya guardada).
+  const onOrder = (e) => { if (!e.target.closest('#clientName, #clientContact')) recompute(); };
+  $('orderOpts').addEventListener('input', onOrder);
+  $('orderOpts').addEventListener('change', onOrder);
   $('addModel').addEventListener('click', addItem);
   $('modelList').addEventListener('click', (e) => {
     const rm = e.target.closest('[data-rm]');
@@ -968,8 +1129,14 @@ async function init() {
   });
   $('copyBtn').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(quoteText()); toast(t('copied')); } catch { toast(quoteText()); }
+    const no = state.quoteNo;
+    const saved = await saveCurrent({ silent: true });
+    if (saved && saved !== no) toast(t('numberChanged', { no: saved }));
   });
-  $('printBtn').addEventListener('click', () => { buildPrintSheet(); window.print(); });
+  $('printBtn').addEventListener('click', async () => { await saveCurrent({ silent: true }); buildPrintSheet(); window.print(); });
+  $('saveBtn').addEventListener('click', () => saveCurrent());
+  setupHistory();
+  setupCloud();
   // El título de la pestaña es el nombre sugerido del PDF; se restaura al terminar.
   const appTitle = document.title;
   window.addEventListener('beforeprint', () => { buildPrintSheet(); if (state.quote) document.title = pdfTitle(); });

@@ -142,6 +142,10 @@ export const DEFAULT_CONFIG = {
     timeCalibration: 1,
   },
 
+  // Historial en la nube: el bloque firebaseConfig de la app web de Firebase (no es secreto;
+  // los datos los protegen las reglas de firestore.rules). null = sin nube.
+  firebase: null,
+
   // SHA-256 del PIN de administración. Por defecto: "1234". ¡Cámbialo!
   adminPinHash: '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4',
 };
