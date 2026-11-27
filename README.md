@@ -14,7 +14,7 @@ Es una página estática: no tiene servidor ni instalación, y el archivo del cl
 2. Elige material, cantidad, acabado (Ninguno · Lijado · Pintado · Multicolor) y entrega (Normal · Urgente). Impresora, calidad, complejidad y "otro insumo" están en **Opciones avanzadas**.
    - **Piezas en el archivo:** si la placa trae varias piezas iguales (ej. 12 llaveros), pon cuántas: el tiempo y los gramos se reparten entre ellas.
    - **Impresora:** P2S o H2C, cada una con su costo por hora.
-   - **Packaging** (Sin · Básico · Regalo), **insumos por unidad** (marca cuántas argollas, imanes, tornillos… lleva cada pieza), **envío** (sale como "Gastos adicionales de envío"), **método de pago** (la comisión de tarjeta se cubre subiendo el precio) y **ITBMS 7 %** (se suma al final y no cuenta como ganancia).
+   - **Packaging** (por defecto *Sin*; Básico · Regalo), **insumos** (solo los que agregas con "+ Agregar insumo…", con la cantidad por pieza; se quitan con ✕), **envío** (sale como "Gastos adicionales de envío"), **método de pago** (Efectivo, Yappy, Transferencia; si algún día hay tarjeta con comisión, se agrega en Administración → Métodos de pago y el precio la cubre) y **ITBMS 7 %** (se suma al final y no cuenta como ganancia).
    - **Varios modelos en una cotización:** en "Modelos de la cotización" usa **+ Agregar modelo** (o suelta varios archivos a la vez: cada uno crea su modelo). Cada modelo tiene su propio archivo o peso/tiempo a mano, material, cantidad, acabado, piezas en el archivo, insumos, impresora, calidad y complejidad; haz clic en un modelo para editarlo y en ✕ para quitarlo. La tarjeta **Pedido** (packaging, pago, envío, entrega e ITBMS) aplica a toda la cotización. Cada modelo muestra la parte del precio recomendado que le toca.
 3. Cotiza el precio **Recomendado**. Si el cliente negocia, escribe el precio en "Precio negociado" para ver el semáforo:
    - 🟢 margen saludable · 🟡 margen bajo · 🔴 requiere aprobación (por debajo del margen mínimo).
@@ -66,7 +66,7 @@ Ejemplos con la configuración inicial (PLA, P2S, datos exactos):
 
 ## Administración
 
-Botón **Administración** → PIN (por defecto **`1234`**, cámbialo en el mismo panel).
+Botón **Administración** → PIN (por defecto **`1234`**, cámbialo en *PIN y avanzado*). El panel está dividido en secciones con ícono: Impresoras, Costos de operación, Precios y metas, Complejidad y estimación, Filamentos, Insumos, Packaging, Envíos, Métodos de pago y PIN y avanzado.
 
 Ahí se editan las dos impresoras, la electricidad, los gastos fijos, el ITBMS, el packaging, los costos de envío, las comisiones de pago, la mano de obra, la meta mensual, los márgenes, los costos por kg de cada material y la calibración. Los cambios se guardan en ese navegador. **Para que todo el equipo use los mismos valores**, pulsa *Exportar config.json* y sube ese archivo a la raíz del repositorio. La app lo carga automáticamente.
 
@@ -95,7 +95,7 @@ Con el panel desbloqueado se ve además el detalle de tarifas (costo por hora, m
 | Packaging básico | $0.18/u + $0.10/pedido | supuesto (bolsa + sticker; tarjeta) |
 | Packaging regalo | $0.85/u + $0.25/pedido | supuesto (caja kraft) |
 | Envío | $0 · $4 · $7 · $6 | supuesto (retiro, ciudad, Oeste/Este, interior) |
-| Comisión tarjeta | 4.5 % | supuesto (Yappy, efectivo y ACH en 0 %) |
+| Métodos de pago | Efectivo, Yappy, Transferencia (0 %) | sin POS ni links de pago por ahora |
 | ITBMS | 7 % | tasa general de Panamá |
 
 ### Calibración
