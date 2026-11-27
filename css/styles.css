@@ -296,3 +296,25 @@ textarea { min-height: 180px; font-family: ui-monospace, Menlo, Consolas, monosp
 #modelsHint { margin: 8px 0 0; }
 .breakdown h3 { font-size: .9rem; margin: 14px 0 6px; }
 .breakdown th { text-align: left; font-size: .8rem; color: var(--muted); font-weight: 600; }
+
+/* ---------- administración por secciones ---------- */
+.admin-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px; margin-top: 12px; }
+.admin-nav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; align-self: start; }
+.admin-nav button { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: .88rem; text-align: left; cursor: pointer; }
+.admin-nav button:hover { background: var(--surface-2); color: var(--text); }
+.admin-nav button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.admin-nav svg { flex: none; }
+.admin-panel-title { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; margin: 0 0 4px; }
+.admin-panel-title svg { color: var(--accent); width: 22px; height: 22px; }
+.admin-panel .admin-sec { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.admin-panel .admin-sec + .admin-sec { margin-top: 12px; }
+@media (max-width: 640px) {
+  .admin-layout { grid-template-columns: 1fr; }
+  .admin-nav { flex-direction: row; overflow-x: auto; position: static; padding-bottom: 4px; }
+  .admin-nav button { flex: none; }
+  .admin-nav button span { white-space: nowrap; }
+}
+/* insumos agregados a mano */
+.supplies label .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: .95rem; padding: 2px 4px; }
+.supplies label .del:hover { color: var(--bad); }
+.supply-add { margin-top: 6px; max-width: 260px; }

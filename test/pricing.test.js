@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { computeQuote, machineRatePerHour, roundUp, quantityDiscount, marginStatus, selectPrinter, hmsToHours, computeOrder } from '../js/pricing.js';
 import { DEFAULT_CONFIG, mergeConfig } from '../js/config.js';
 
-const cfg = DEFAULT_CONFIG;
+// La tarjeta ya no viene de fábrica (no hay POS), pero el motor sigue soportando comisiones
+// si el admin agrega un método con %.
+const cfg = mergeConfig(DEFAULT_CONFIG, { paymentFees: { ...DEFAULT_CONFIG.paymentFees, card: { name: 'Tarjeta', pct: 0.045 } } });
 const base = { grams: 50, hours: 2, complexity: 2, material: 'PLA', quality: 'standard', finish: 'none', urgent: false, quantity: 1, exact: true };
 const close = (a, b, tol = 1e-6) => assert.ok(Math.abs(a - b) <= tol, `${a} ≉ ${b}`);
 
@@ -268,4 +270,9 @@ test('alerta de mercado: solo el precio de las piezas, sin insumos ni preparaci�
   const plain = computeQuote(job, cfg);
   const withNfc = computeQuote({ ...job, suppliesPerUnit: 1.5, packaging: 'gift' }, cfg);
   assert.equal(withNfc.warnings.length, plain.warnings.length);
+});
+
+test('de fábrica: sin tarjeta y ningún método de pago cobra comisión', () => {
+  assert.equal(DEFAULT_CONFIG.paymentFees.card, undefined);
+  for (const v of Object.values(DEFAULT_CONFIG.paymentFees)) assert.equal(v.pct, 0);
 });

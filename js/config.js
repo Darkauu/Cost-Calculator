@@ -87,7 +87,7 @@ export const DEFAULT_CONFIG = {
     cash:     { name: 'Efectivo',               pct: 0 },
     yappy:    { name: 'Yappy',                  pct: 0 },
     transfer: { name: 'Transferencia / ACH',    pct: 0 },
-    card:     { name: 'Tarjeta (link de pago)', pct: 0.045 }, // SUPUESTO
+    // Sin POS ni links de pago por ahora. Si se agregan, se crean en Administración → Pagos.
   },
 
   // Insumos / consumibles que se agregan por unidad (el vendedor marca cuántos lleva cada pieza).

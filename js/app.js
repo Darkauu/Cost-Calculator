@@ -71,7 +71,7 @@ function readForm() {
     quality: document.querySelector('input[name=quality]:checked')?.value || 'standard',
     suppliesOther: n('supplies'),
     supplies: Object.fromEntries([...document.querySelectorAll('#suppliesList input[data-supply]')]
-      .map((el) => [el.dataset.supply, Math.max(0, parseFloat(el.value) || 0)]).filter(([, v]) => v > 0)),
+      .map((el) => [el.dataset.supply, Math.max(0, parseFloat(el.value) || 0)])),
     manualOpen: $('manual').open,
     grams: n('manualGrams'), h: n('manualH'), m: n('manualM'), s: n('manualS'),
     ph: n('prepH'), pm: n('prepM'), ps: n('prepS'),
@@ -90,7 +90,7 @@ function loadForm(it) {
   $('complexity').value = f.complexity;
   for (const r of document.querySelectorAll('input[name=quality]')) r.checked = r.value === f.quality;
   $('supplies').value = f.suppliesOther;
-  for (const el of document.querySelectorAll('#suppliesList input[data-supply]')) el.value = f.supplies[el.dataset.supply] || 0;
+  renderSupplies(f.supplies);
   $('manual').open = f.manualOpen;
   $('manualGrams').value = f.grams;
   $('manualH').value = f.h; $('manualM').value = f.m; $('manualS').value = f.s;
@@ -548,7 +548,7 @@ function clientDoc() {
   };
 }
 
-const payLabel = (g) => `${g.names.join(' / ')}${g.pct ? ` · ${t('q_feeIncl', { pct: `${num(g.pct * 100, 1)} %` })}` : ''}`;
+const payLabel = (g) => g.names.join(' / ');
 const payTotal = (g) => money(g.tier.clientTotal) + (g.tier.tax ? ` ${t('q_withTax')}` : '');
 
 function quoteText() {
@@ -689,43 +689,84 @@ function setupListEditors() {
 const getPath = (o, p) => p.split('.').reduce((a, k) => a?.[k], o);
 const setPath = (o, p, v) => { const ks = p.split('.'); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; };
 
+// Íconos de las secciones de Administración (trazos simples, heredan el color del texto).
+const ICONS = {
+  printer: '<path d="M7 9V4h10v5M7 17H5a2 2 0 01-2-2v-4a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2h-2M7 14h10v6H7z"/>',
+  costs: '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .9-3 2s1.3 1.8 3 2 3 .9 3 2-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5M12 6v2M12 16v2"/>',
+  pricing: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5"/>',
+  complexity: '<path d="M4 20V14M10 20V9M16 20V4M22 20H2"/>',
+  materials: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v6M21 12h-6"/>',
+  supplies: '<path d="M14 4a3 3 0 104 4l-9 9a2 2 0 11-3-3z"/><path d="M5 19l2-2"/>',
+  packaging: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  shipping: '<path d="M3 6h11v10H3zM14 9h4l3 3v4h-7"/><circle cx="7" cy="17.5" r="1.5"/><circle cx="17" cy="17.5" r="1.5"/>',
+  payments: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M7 15h3"/>',
+  security: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
+};
+const icon = (k) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
+// Secciones: cada pestaña agrupa bloques de ADMIN_SECTIONS y/o listas editables.
+const ADMIN_TABS = [
+  { id: 'printers', icon: 'printer', title: 'tab_printers', secs: ['sec_printer', 'sec_printer2'] },
+  { id: 'costs', icon: 'costs', title: 'tab_costs', secs: ['sec_costs'] },
+  { id: 'pricing', icon: 'pricing', title: 'tab_pricing', secs: ['sec_pricing'] },
+  { id: 'complexity', icon: 'complexity', title: 'tab_complexity', secs: ['sec_complexity', 'sec_estimation'] },
+  { id: 'materials', icon: 'materials', title: 'sec_materials', lists: ['materials'] },
+  { id: 'supplies', icon: 'supplies', title: 'sec_supplies', lists: ['supplies'] },
+  { id: 'packaging', icon: 'packaging', title: 'tab_packaging', lists: ['packaging'] },
+  { id: 'shipping', icon: 'shipping', title: 'tab_shipping', lists: ['shipping'] },
+  { id: 'payments', icon: 'payments', title: 'tab_payments', lists: ['paymentFees'] },
+  { id: 'security', icon: 'security', title: 'tab_security', extra: true },
+];
+
+function adminSection(sec, fields, cfg) {
+  let html = `<div class="admin-sec"><h3>${t(sec)}</h3>`;
+  const simple = fields.filter(([, type]) => !type || type === 'text' || type === 'pct');
+  const lists = fields.filter(([, type]) => type === 'list' || type === 'pctlist');
+  if (simple.length) {
+    html += '<div class="admin-grid">' + simple.map(([path, type]) => {
+      const v = getPath(cfg, path);
+      const shown = type === 'pct' ? +(v * 100).toFixed(2) : v;
+      return `<label><span>${t('f_' + path.replaceAll('.', '_'))}</span><input data-path="${path}" data-type="${type || 'num'}" type="${type === 'text' ? 'text' : 'number'}" step="any" value="${esc(shown)}"></label>`;
+    }).join('') + '</div>';
+  }
+  for (const [path, type] of lists) {
+    const arr = getPath(cfg, path);
+    html += `<label><span>${t('f_' + path)}</span><div class="list5">${arr.map((v, i) =>
+      `<input data-path="${path}" data-index="${i}" data-type="${type}" type="number" step="any" value="${type === 'pctlist' ? +(v * 100).toFixed(2) : v}">`).join('')}</div></label>`;
+  }
+  const info = (label, v) => `<p class="admin-info muted">${t(label)}: <b>${money(v)}${t('perHour')}</b></p>`;
+  if (sec === 'sec_printer') html += info('machineRate', machineRatePerHour(cfg));
+  if (sec === 'sec_printer2') html += info('machineRate', machineRatePerHour(cfg, cfg.printer2));
+  if (sec === 'sec_costs') html += info('overheadPerHour', (cfg.fixedCostsMonthly || 0) / Math.max(1, cfg.sellableHoursPerMonth));
+  if (sec === 'sec_pricing') html += info('goalPerHour', cfg.monthlyProfitGoal / Math.max(1, cfg.sellableHoursPerMonth));
+  return html + '</div>';
+}
+
 function renderAdmin() {
   const cfg = state.cfg;
-  let html = '';
-  for (const [sec, fields] of ADMIN_SECTIONS) {
-    html += `<div class="admin-sec"><h3>${t(sec)}</h3>`;
-    const simple = fields.filter(([, type]) => !type || type === 'text' || type === 'pct');
-    const lists = fields.filter(([, type]) => type === 'list' || type === 'pctlist');
-    if (simple.length) {
-      html += '<div class="admin-grid">' + simple.map(([path, type]) => {
-        const v = getPath(cfg, path);
-        const shown = type === 'pct' ? +(v * 100).toFixed(2) : v;
-        return `<label><span>${t('f_' + path.replaceAll('.', '_'))}</span><input data-path="${path}" data-type="${type || 'num'}" type="${type === 'text' ? 'text' : 'number'}" step="any" value="${esc(shown)}"></label>`;
-      }).join('') + '</div>';
+  const active = state.adminTab || 'printers';
+  const nav = ADMIN_TABS.map((tb) => `<button type="button" role="tab" data-tab="${tb.id}" aria-selected="${tb.id === active}" class="${tb.id === active ? 'active' : ''}">${icon(tb.icon)}<span>${t(tb.title)}</span></button>`).join('');
+  const panels = ADMIN_TABS.map((tb) => {
+    let body = '';
+    for (const sec of tb.secs || []) body += adminSection(sec, ADMIN_SECTIONS.find(([k]) => k === sec)[1], cfg);
+    for (const key of tb.lists || []) body += listEditor(ADMIN_LISTS.find((x) => x.key === key), cfg[key] || {});
+    if (tb.extra) {
+      body += `<div class="admin-sec"><h3>PIN</h3><div class="admin-grid"><label><span>${t('newPin')}</span><input type="password" id="newPin" autocomplete="new-password"></label></div></div>`;
+      body += `<details class="admin-sec"><summary>${t('sec_advanced')}</summary><textarea id="rawCfg" spellcheck="false">${esc(JSON.stringify(cfg, null, 2))}</textarea></details>`;
     }
-    for (const [path, type] of lists) {
-      const arr = getPath(cfg, path);
-      html += `<label><span>${t('f_' + path)}</span><div class="list5">${arr.map((v, i) =>
-        `<input data-path="${path}" data-index="${i}" data-type="${type}" type="number" step="any" value="${type === 'pctlist' ? +(v * 100).toFixed(2) : v}">`).join('')}</div></label>`;
-    }
-    if (sec === 'sec_printer') {
-      html += `<p class="admin-info muted">${t('machineRate')}: <b>${money(machineRatePerHour(cfg))}${t('perHour')}</b></p>`;
-    }
-    if (sec === 'sec_printer2') {
-      html += `<p class="admin-info muted">${t('machineRate')}: <b>${money(machineRatePerHour(cfg, cfg.printer2))}${t('perHour')}</b></p>`;
-    }
-    if (sec === 'sec_costs') {
-      html += `<p class="admin-info muted">${t('overheadPerHour')}: <b>${money((cfg.fixedCostsMonthly || 0) / Math.max(1, cfg.sellableHoursPerMonth))}${t('perHour')}</b></p>`;
-    }
-    if (sec === 'sec_pricing') {
-      html += `<p class="admin-info muted">${t('goalPerHour')}: <b>${money(cfg.monthlyProfitGoal / Math.max(1, cfg.sellableHoursPerMonth))}${t('perHour')}</b></p>`;
-    }
-    html += '</div>';
-  }
-  for (const spec of ADMIN_LISTS) html += listEditor(spec, cfg[spec.key] || {});
-  html += `<div class="admin-sec"><h3>PIN</h3><div class="admin-grid"><label><span>${t('newPin')}</span><input type="password" id="newPin" autocomplete="new-password"></label></div></div>`;
-  html += `<details class="admin-sec"><summary>${t('sec_advanced')}</summary><textarea id="rawCfg" spellcheck="false">${esc(JSON.stringify(cfg, null, 2))}</textarea></details>`;
-  $('adminFields').innerHTML = html;
+    return `<section class="admin-panel" role="tabpanel" data-panel="${tb.id}" ${tb.id === active ? '' : 'hidden'}>
+      <h2 class="admin-panel-title">${icon(tb.icon)}${t(tb.title)}</h2>${body}</section>`;
+  }).join('');
+  $('adminFields').innerHTML = `<div class="admin-layout"><nav class="admin-nav" role="tablist">${nav}</nav><div class="admin-panels">${panels}</div></div>`;
+}
+
+function setupAdminTabs() {
+  $('adminFields').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tab]');
+    if (!b) return;
+    state.adminTab = b.dataset.tab;
+    for (const x of $('adminFields').querySelectorAll('[data-tab]')) { const on = x === b; x.classList.toggle('active', on); x.setAttribute('aria-selected', on); }
+    for (const p of $('adminFields').querySelectorAll('[data-panel]')) p.hidden = p.dataset.panel !== state.adminTab;
+  });
 }
 
 async function collectAdmin() {
@@ -828,15 +869,21 @@ function fillPrinterAndShipping() {
   ps.value = list.some(([k]) => k === prevP) ? prevP : 'printer';
   $('printerField').hidden = list.length < 2;
   fillSelect('shipping', cfg.shipping, (v) => `${v.name} · ${money(v.cost)}`, 'pickup');
-  fillSelect('packaging', cfg.packaging, (v) => v.name + (v.unit ? ` · ${money(v.unit)} ${t('perUnit')}` : ''), 'basic');
+  fillSelect('packaging', cfg.packaging, (v) => v.name + (v.unit ? ` · ${money(v.unit)} ${t('perUnit')}` : ''), 'none');
   fillSelect('payment', cfg.paymentFees, (v) => v.name + (v.pct ? ` (${num(v.pct * 100, 1)}%)` : ''), 'yappy');
   $('itbmsLabel').textContent = t('itbms', { rate: num((cfg.itbmsRate || 0) * 100, 0) });
-  // Insumos del catálogo: cantidad por unidad (se conserva lo que ya estaba marcado).
-  const prev = Object.fromEntries([...document.querySelectorAll('#suppliesList input[data-supply]')].map((el) => [el.dataset.supply, el.value]));
-  const entries = Object.entries(cfg.supplies || {});
-  $('suppliesBox').hidden = !entries.length;
-  $('suppliesList').innerHTML = entries.map(([id, v]) =>
-    `<label><input type="number" min="0" step="1" value="${esc(prev[id] ?? 0)}" data-supply="${esc(id)}" aria-label="${esc(v.name)}"><span>${esc(v.name)}</span><span class="cost">${money(v.cost)}</span></label>`).join('');
+  renderSupplies(cur()?.form.supplies || {});
+}
+
+// Insumos del modelo: solo aparecen los que se agregan (así no queda un número puesto sin querer).
+function renderSupplies(chosen) {
+  const cat = state.cfg.supplies || {};
+  const ids = Object.keys(chosen || {}).filter((id) => cat[id]);
+  $('suppliesBox').hidden = !Object.keys(cat).length;
+  $('suppliesList').innerHTML = ids.map((id) => `<label><input type="number" min="0" step="1" value="${esc(chosen[id])}" data-supply="${esc(id)}" aria-label="${esc(cat[id].name)}"><span>${esc(cat[id].name)}</span><span class="cost">${money(cat[id].cost)} ${t('perUnit')}</span><button type="button" class="del" data-supply-del="${esc(id)}" aria-label="${esc(t('remove'))}">✕</button></label>`).join('');
+  const free = Object.entries(cat).filter(([id]) => !ids.includes(id));
+  $('supplyAdd').hidden = !free.length;
+  $('supplyAdd').innerHTML = `<option value="">${esc(t('addSupply'))}</option>` + free.map(([id, v]) => `<option value="${esc(id)}">${esc(v.name)} · ${money(v.cost)}</option>`).join('');
 }
 
 function fillSelect(id, list, label, fallback) {
@@ -871,6 +918,7 @@ async function init() {
   setupDrop();
   setupAdmin();
   setupListEditors();
+  setupAdminTabs();
   for (const b of document.querySelectorAll('[data-lang]')) {
     b.addEventListener('click', () => { setLang(b.dataset.lang); refreshLanguage(); });
   }
@@ -884,6 +932,25 @@ async function init() {
     if (!b) return;
     $('complexity').value = b.dataset.level;
     onItem();
+  });
+  $('supplyAdd').addEventListener('change', (e) => {
+    e.stopPropagation();
+    const id = e.target.value;
+    if (!id) return;
+    saveForm();
+    cur().form.supplies = { ...cur().form.supplies, [id]: 1 };
+    renderSupplies(cur().form.supplies);
+    recompute();
+    $('suppliesList').querySelector(`[data-supply="${CSS.escape(id)}"]`)?.select();
+  });
+  $('suppliesList').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-supply-del]');
+    if (!b) return;
+    e.preventDefault();
+    saveForm();
+    delete cur().form.supplies[b.dataset.supplyDel];
+    renderSupplies(cur().form.supplies);
+    recompute();
   });
   $('orderOpts').addEventListener('input', recompute);
   $('orderOpts').addEventListener('change', recompute);
