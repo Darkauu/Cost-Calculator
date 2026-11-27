@@ -64,6 +64,10 @@ Ejemplos con la configuración inicial (PLA, P2S, datos exactos):
 
 (Sin packaging ni envío, pago en efectivo. Incluye $0.33/h de gastos fijos.)
 
+## Historial y PO (nube)
+
+Con Firebase configurado, arriba a la derecha aparece **Iniciar sesión** (cuenta de Google). Al copiar, imprimir o pulsar **Guardar en historial**, la cotización se guarda con su número, el cliente y el vendedor. En **Historial** se filtra por mes, estado o cliente, y cada cotización se marca como **PO** (precio final pagado y fecha) o **Perdida**. El resumen muestra cotizaciones, PO, conversión, ventas y, para el admin, la ganancia real contra la meta mensual. Configuración paso a paso: [docs/FIREBASE.md](docs/FIREBASE.md).
+
 ## Administración
 
 Botón **Administración** → PIN (por defecto **`1234`**, cámbialo en *PIN y avanzado*). El panel está dividido en secciones con ícono: Impresoras, Costos de operación, Precios y metas, Complejidad y estimación, Filamentos, Insumos, Packaging, Envíos, Métodos de pago y PIN y avanzado.

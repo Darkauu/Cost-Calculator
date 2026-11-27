@@ -26,6 +26,9 @@
         <button type="button" data-lang="es">ES</button>
         <button type="button" data-lang="en">EN</button>
       </div>
+      <button type="button" class="btn ghost hidden" id="historyBtn" data-i18n="history">Historial</button>
+      <button type="button" class="btn ghost hidden" id="loginBtn" data-i18n="signIn">Iniciar sesión</button>
+      <span class="user-chip hidden" id="userChip"><span id="userName"></span><button type="button" class="link" id="logoutBtn" data-i18n="signOut"></button></span>
       <button type="button" class="btn ghost" id="adminBtn" data-i18n="admin">Administración</button>
       <button type="button" class="btn ghost hidden" id="lockBtn" data-i18n="lock">Bloquear</button>
     </div>
@@ -137,6 +140,8 @@
         <h2 data-i18n="orderOptions"></h2>
         <p class="muted small" data-i18n="orderHint"></p>
         <form id="orderOpts" class="opts" onsubmit="return false">
+          <label><span data-i18n="clientName"></span><input type="text" id="clientName" autocomplete="off"></label>
+          <label><span data-i18n="clientContact"></span><input type="text" id="clientContact" autocomplete="off"></label>
           <label><span data-i18n="packaging"></span><select id="packaging"></select></label>
           <label><span data-i18n="payment"></span><select id="payment"></select></label>
           <label><span data-i18n="shipping"></span><select id="shipping"></select></label>
@@ -175,7 +180,9 @@
           <div class="actions">
             <button type="button" class="btn primary" id="copyBtn" data-i18n="copyQuote"></button>
             <button type="button" class="btn" id="printBtn" data-i18n="printQuote"></button>
+            <button type="button" class="btn hidden" id="saveBtn" data-i18n="saveQuote"></button>
           </div>
+          <p class="muted small save-status" id="saveStatus" hidden></p>
           <div class="breakdown hidden" id="breakdown"></div>
         </div>
       </div>
@@ -211,6 +218,29 @@
         <button type="button" class="btn primary" id="saveCfg" data-i18n="save"></button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="historyDialog" class="dlg wide history">
+    <div class="history-head">
+      <h2 data-i18n="history"></h2>
+      <div class="history-filters">
+        <input type="month" id="histMonth" aria-label="Mes">
+        <select id="histStatus">
+          <option value="all" data-i18n="st_all"></option>
+          <option value="quoted" data-i18n="st_quoted"></option>
+          <option value="po" data-i18n="st_po"></option>
+          <option value="lost" data-i18n="st_lost"></option>
+        </select>
+        <input type="search" id="histSearch" data-i18n-placeholder="histSearch">
+      </div>
+    </div>
+    <div class="hist-summary" id="histSummary"></div>
+    <div class="hist-table-wrap"><table class="hist-table"><thead><tr>
+      <th data-i18n="h_number"></th><th data-i18n="h_client"></th><th data-i18n="h_seller"></th>
+      <th class="num" data-i18n="h_quoted"></th><th data-i18n="h_status"></th><th class="num" data-i18n="h_final"></th><th></th>
+    </tr></thead><tbody id="histBody"></tbody></table></div>
+    <p class="muted small" id="histEmpty" hidden data-i18n="histEmpty"></p>
+    <div class="actions"><span class="spacer"></span><button type="button" class="btn" id="closeHistory" data-i18n="close"></button></div>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

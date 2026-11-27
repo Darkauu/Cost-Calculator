@@ -65,7 +65,7 @@ h2 { font-size: 1rem; margin: 0 0 .75rem; }
   padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface);
 }
 .topbar p { margin: 2px 0 0; }
-.topbar-actions { display: flex; gap: 8px; align-items: center; }
+.topbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 
 .layout {
   display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px;
@@ -318,3 +318,30 @@ textarea { min-height: 180px; font-family: ui-monospace, Menlo, Consolas, monosp
 .supplies label .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: .95rem; padding: 2px 4px; }
 .supplies label .del:hover { color: var(--bad); }
 .supply-add { margin-top: 6px; max-width: 260px; }
+
+/* ---------- sesión e historial ---------- */
+.user-chip { display: inline-flex; align-items: center; gap: 8px; font-size: .85rem; color: var(--muted); }
+.user-chip .link { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+.save-status { margin: 8px 0 0; }
+.dlg.history { width: min(980px, calc(100vw - 32px)); }
+.history-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.history-head h2 { margin: 0; }
+.history-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.history-filters input, .history-filters select { width: auto; }
+.hist-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 14px 0; }
+.hist-summary .hs { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.hist-summary .hs b { font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.hist-table-wrap { overflow-x: auto; }
+.hist-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+.hist-table th { text-align: left; font-size: .78rem; color: var(--muted); font-weight: 600; padding: 6px; border-bottom: 1px solid var(--border); }
+.hist-table td { padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.hist-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hist-act { white-space: nowrap; text-align: right; }
+.hist-act .btn + .btn { margin-left: 4px; }
+.po-edit { display: inline-flex; gap: 4px; align-items: center; }
+.po-edit input[type=number] { width: 84px; }
+.po-edit input[type=date] { width: 140px; }
+.pill.st-quoted { background: var(--surface-2); color: var(--muted); }
+.pill.st-po { background: var(--accent-soft); color: var(--accent); }
+.pill.st-lost { background: transparent; color: var(--bad); border: 1px solid currentColor; }
+#cloudCfg { width: 100%; min-height: 150px; font-family: ui-monospace, monospace; font-size: .8rem; }

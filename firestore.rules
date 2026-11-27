@@ -1,0 +1,37 @@
+rules_version = '2';
+// Reglas de Firestore del cotizador. Cópialas en Firebase → Firestore Database → Reglas → Publicar.
+// Solo entran los correos que estén en la colección `members` (el documento se llama como el
+// correo, en minúsculas, con el campo role: "admin" o "seller").
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function email() { return request.auth.token.email.lower(); }
+    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function member() { return signedIn() && exists(/databases/$(database)/documents/members/$(email())); }
+    function admin() { return member() && get(/databases/$(database)/documents/members/$(email())).data.role == 'admin'; }
+
+    // Equipo: cualquiera del equipo ve la lista; solo un admin agrega o quita personas.
+    match /members/{id} {
+      allow read: if member();
+      allow write: if admin();
+    }
+
+    match /quotes/{number} {
+      allow read: if member();
+      // Al crear, el autor tiene que ser quien inició sesión y la cotización empieza abierta.
+      allow create: if member()
+        && request.resource.data.createdBy.email == email()
+        && request.resource.data.status == 'quoted';
+      // Ventas solo cambia el estado, el precio final, la fecha de PO, el cliente y las notas.
+      allow update: if admin() || (member() && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['status', 'finalPrice', 'poDate', 'client', 'notes', 'updatedAt', 'updatedBy']));
+      allow delete: if admin();
+
+      // Costos y ganancia: se escriben al guardar; solo un admin los lee o los corrige.
+      match /private/{doc} {
+        allow read: if admin();
+        allow create: if member();
+        allow update, delete: if admin();
+      }
+    }
+  }
+}
