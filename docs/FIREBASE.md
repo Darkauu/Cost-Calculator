@@ -9,7 +9,11 @@ Plan gratis (Spark): alcanza de sobra para el volumen de Vertex. Ver https://fir
 1. https://console.firebase.google.com → **Crear proyecto** (por ejemplo `vertex-cotizador`). Google Analytics no hace falta.
 2. **Compilación → Authentication → Comenzar → Método de acceso → Google →** Habilitar.
 3. **Authentication → Configuración → Dominios autorizados →** agregar `darkauu.github.io`.
-4. **Compilación → Firestore Database → Crear base de datos →** modo producción, ubicación `nam5 (United States)`.
+4. **Compilación → Firestore Database → Crear base de datos:**
+   - Edición: **Standard** (la Enterprise es la compatible con MongoDB; no hace falta).
+   - ID de la base de datos: deja **`(default)`**.
+   - Ubicación: **`nam5 (United States)`** u otra de EE. UU. (no se puede cambiar después).
+   - Si pregunta por las reglas, elige **modo producción** (si no pregunta, sigue).
 5. **Firestore → Reglas →** pegar el contenido de [`firestore.rules`](../firestore.rules) → **Publicar**.
 
 ## 2. Dar acceso al equipo
